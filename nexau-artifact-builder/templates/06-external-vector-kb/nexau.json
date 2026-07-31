@@ -1,0 +1,6 @@
+{
+  "agents": {
+    "map_kb_agent": "agent.yaml"
+  },
+  "excluded": [".nexau/", ".env", "__pycache__/", "start.py", ".DS_Store"]
+}

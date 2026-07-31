@@ -1,0 +1,42 @@
+variables:
+  max_tokens: 8000
+
+type: agent
+name: database_mcp_agent
+description: 企业经营数据库 MCP 问数 Agent。通过外部 HTTP MCP server 只读访问业务数据库。
+
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+tool_call_mode: structured
+max_iterations: 80
+max_context_tokens: 128000
+
+llm_config:
+  # NAC 上只写 model + 业务采样参数：base_url / api_key / api_type / stream
+  # 都会被平台在运行期覆盖，写了是噪声。
+  # 本地裸跑 NexAU（不经 NAC）时，需要自行补 base_url / api_key。
+  model: ${env.LLM_MODEL}
+  max_tokens: ${variables.max_tokens}
+
+# 本 Agent 的能力全部来自 MCP server，不注册任何本地工具 / skill / 中间件。
+# ⚠️ 这三个键即使为空也要显式写出来——平台官方制品规范把 tools / skills / middlewares
+#    列为 required_list_fields，缺键会被判不合规（见 ../../references/artifact-spec-checklist.md §4）。
+tools: []
+skills: []
+middlewares: []
+
+mcp_servers:
+  - name: enterprise_ops_db
+    type: http
+    # 改成 MCP server 在 NAC runtime 可达的地址
+    # (详见 TEMPLATE.md「复制后必须改的地方」)
+    url: http://host.docker.internal:8000/mcp
+    headers:
+      Accept: application/json, text/event-stream
+      # 本机调试需要 Host=localhost(sqlite_mcp_server 开了 DNS rebinding 防护)
+      Host: localhost:8000
+      # ⚠️ 鉴权 header 这里故意不给注释样例：env 插值在 yaml.safe_load 之前
+      #    对整份文件原文做正则替换，注释里的占位符同样会被解析，变量没配就是
+      #    加载期 ConfigError。需要鉴权时：先把 MCP_TOKEN 建成 runtime scope
+      #    环境变量，再照 TEMPLATE.md 里的写法加一行 Authorization。
+    timeout: 30

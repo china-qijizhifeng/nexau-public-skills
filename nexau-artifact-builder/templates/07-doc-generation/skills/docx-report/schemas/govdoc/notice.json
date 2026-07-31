@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "红头文件（通知/意见/批复）",
+  "description": "标准红头文件：红色机关名称 + 分隔线 + 发文字号 + 版记。也适用于请示。",
+  "type": "object",
+  "properties": {
+    "type": { "const": "notice" },
+    "gov_org": { "type": "string", "description": "发文机关名称，如 XX市人民政府办公厅" },
+    "doc_num": { "type": "string", "description": "发文字号，如 沪民规〔2025〕1号" },
+    "title": { "type": "string", "description": "公文标题" },
+    "send_to": { "type": "string", "description": "主送机关" },
+    "date": { "type": "string", "description": "成文日期，如 2025年2月12日" },
+    "cc_orgs": { "type": "string", "description": "抄送机关（可选）" },
+    "urgency": { "type": "string", "enum": ["普通", "加急", "特急"], "default": "普通" },
+    "confidential": { "type": "string", "enum": ["公开", "内部", "秘密", "机密"], "default": "公开" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" },
+      "description": "正文结构"
+    },
+    "policy_refs": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/policy_ref" },
+      "description": "政策依据索引（可选）"
+    },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "gov_org", "doc_num", "title", "send_to", "date", "sections"]
+}

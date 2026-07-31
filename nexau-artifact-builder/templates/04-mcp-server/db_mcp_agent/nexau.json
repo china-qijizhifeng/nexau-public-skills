@@ -1,0 +1,6 @@
+{
+  "agents": {
+    "database_mcp_agent": "agent.yaml"
+  },
+  "excluded": [".nexau/", ".env", "__pycache__/", "*.pyc"]
+}

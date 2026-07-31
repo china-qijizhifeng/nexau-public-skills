@@ -1,0 +1,82 @@
+type: agent
+name: map_kb_agent
+description: >-
+  MAP 平台向量库问答 Agent。基于精选公开法规/政策/制度向量库做 hybrid /
+  semantic / fulltext 检索,以同义词扩召回 + 跨 KB 并行的方式回答用户问题,
+  给出引用清晰的中文回答。
+
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+
+# NAC 上 base_url / api_key / api_type / stream 由平台无条件覆盖，写了也不生效，
+# 因此这里只留 model + 业务采样参数。
+# ⚠️ 若脱离 NAC 本地裸跑 NexAU，需要自行补回 base_url / api_key（以及需要时的 api_type）。
+llm_config:
+  model: ${env.LLM_MODEL}
+  max_tokens: 8192
+  temperature: 0.2
+
+max_iterations: 50
+max_context_tokens: 128000
+tool_call_mode: structured
+
+tools:
+  # --- 标配三件套 ---
+  - name: read_file
+    yaml_path: tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: search_file_content
+    yaml_path: tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  - name: run_shell_command
+    yaml_path: tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+  # --- MAP 向量 KB 工具（搜索导向）---
+  # ⚠️ 用了 extra_kwargs 的工具，其 .tool.yaml 的 input_schema 里
+  #    绝对不能写 `additionalProperties: false`（框架会把 extra_kwargs
+  #    并进参数一起做 jsonschema 校验，必报 Additional properties are not allowed）。
+  #    也不要把 app_key/app_secret/user_id 写进 properties——那样模型就能看见并覆盖密钥。
+  # ⚠️ MAP_APP_KEY / MAP_APP_SECRET / MAP_USER_ID 必须配在 **runtime scope** 环境变量
+  #    （custom_tools 跑在 agent-runtime 进程内，不是沙箱内；沙箱 scope 在这里读不到）。
+  #    三者任一未设置 → 加载期 ConfigError，agent 直接起不来。
+  - name: map_vec_get_chunks_by_file
+    yaml_path: tools/map_vec_get_chunks_by_file.tool.yaml
+    binding: custom_tools.map_api:map_vec_get_chunks_by_file
+    extra_kwargs:
+      app_key: ${env.MAP_APP_KEY}
+      app_secret: ${env.MAP_APP_SECRET}
+      user_id: ${env.MAP_USER_ID}
+
+  - name: map_vec_batch_search
+    yaml_path: tools/map_vec_batch_search.tool.yaml
+    binding: custom_tools.map_api:map_vec_batch_search
+    extra_kwargs:
+      app_key: ${env.MAP_APP_KEY}
+      app_secret: ${env.MAP_APP_SECRET}
+      user_id: ${env.MAP_USER_ID}
+
+  - name: map_vec_semantic_search
+    yaml_path: tools/map_vec_semantic_search.tool.yaml
+    binding: custom_tools.map_api:map_vec_semantic_search
+    extra_kwargs:
+      app_key: ${env.MAP_APP_KEY}
+      app_secret: ${env.MAP_APP_SECRET}
+      user_id: ${env.MAP_USER_ID}
+
+  - name: map_vec_fulltext_search
+    yaml_path: tools/map_vec_fulltext_search.tool.yaml
+    binding: custom_tools.map_api:map_vec_fulltext_search
+    extra_kwargs:
+      app_key: ${env.MAP_APP_KEY}
+      app_secret: ${env.MAP_APP_SECRET}
+      user_id: ${env.MAP_USER_ID}
+
+# 本模板的知识全部来自外部向量库，不随制品携带 skill；
+# 但 skills 字段必须显式声明为空列表（缺失会被静态校验判为非法类型）。
+skills: []
+
+middlewares:
+  - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
+    params:
+      threshold: 0.6

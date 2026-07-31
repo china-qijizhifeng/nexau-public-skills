@@ -1,0 +1,19 @@
+type: tool
+name: run_shell_command
+description: >-
+  Executes a given shell command as `bash -c <command>`. Returns combined
+  stdout/stderr output, exit code if non-zero, and error info if applicable.
+input_schema:
+  type: object
+  properties:
+    command:
+      type: string
+      description: Exact bash command to execute.
+    description:
+      type: string
+      description: >-
+        Brief description of the command for the user.
+  required:
+    - command
+  additionalProperties: false
+  $schema: http://json-schema.org/draft-07/schema#

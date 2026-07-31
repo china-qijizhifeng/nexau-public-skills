@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "通用文档（非公文）",
+  "description": "适用于普通业务报告、方案、纪要、说明文档等，不强制公文版头格式",
+  "type": "object",
+  "properties": {
+    "type": { "const": "generic" },
+    "title": { "type": "string", "description": "文档标题" },
+    "subtitle": { "type": "string", "description": "副标题（可选）" },
+    "org": { "type": "string", "description": "机构/团队名称（可选）" },
+    "author": { "type": "string", "description": "作者（可选）" },
+    "date": { "type": "string", "description": "日期（可选）" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" },
+      "description": "正文结构"
+    },
+    "kv_tables": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/kv_table" },
+      "description": "键值对表格（可选）"
+    },
+    "data_tables": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/data_table" },
+      "description": "数据表格（可选）"
+    },
+    "policy_refs": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/policy_ref" },
+      "description": "参考依据索引（可选）"
+    },
+    "footer_note": { "type": "string", "description": "页末说明（可选）" }
+  },
+  "required": ["type", "title", "sections"]
+}

@@ -1,0 +1,41 @@
+type: tool
+name: map_vec_semantic_search
+description: >-
+  Pure semantic / embedding-based search inside a vector knowledge base.
+  Best when the user's wording differs from the document's wording (e.g.
+  "外资规则" vs "外商投资法") — relies entirely on meaning, not keyword
+  match. Same response shape as map_vec_batch_search. Prefer map_vec_batch_search
+  in most cases (it includes vector signal AND keyword recall and reranks);
+  use this when you specifically want pure semantic without lexical bias.
+  knowledge_base_id is resolved from the curated KB mapping in the system
+  prompt or supplied by the user; falls back to MAP_VECTOR_KB_ID if omitted.
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: The natural-language query.
+    knowledge_base_id:
+      type: string
+      description: >-
+        Optional. Vector knowledge_base_id. Falls back to MAP_VECTOR_KB_ID.
+    top_k:
+      type: integer
+      description: "Optional. Max hits, default server-side."
+      minimum: 1
+      maximum: 50
+    score_threshold:
+      type: number
+      description: "Optional. Drop hits below this similarity score."
+    reranker:
+      type: string
+      description: >-
+        Optional. Reranker model name (e.g. "bge-reranker-base") for
+        second-pass scoring.
+    reranker_score_threshold:
+      type: number
+      description: "Optional. Drop hits whose reranker score is below this."
+  required:
+    - query
+  # ⚠️ 不能加 `additionalProperties: false`（本工具用 extra_kwargs 注入鉴权三要素）。
+  $schema: http://json-schema.org/draft-07/schema#

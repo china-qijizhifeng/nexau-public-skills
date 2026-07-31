@@ -1,0 +1,15 @@
+type: tool
+name: file_fingerprint
+description: >-
+  计算单个文件的指纹：大小、sha256 校验和、推测 MIME 类型。
+  归档前可用它识别重复文件（sha256 相同 = 内容重复），或为归档清单补充元数据。
+input_schema:
+  type: object
+  properties:
+    file_path:
+      type: string
+      description: 要计算指纹的文件路径
+  required:
+    - file_path
+  additionalProperties: false
+  $schema: http://json-schema.org/draft-07/schema#

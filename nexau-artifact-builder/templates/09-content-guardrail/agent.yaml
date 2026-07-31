@@ -1,0 +1,41 @@
+type: agent
+name: sensitive_word_agent
+description: 政务咨询助手 + 敏感词内容安全护栏 — 输入 / 输出 / 工具结果三路拦截演示。
+
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+max_iterations: 50
+tool_call_mode: structured
+
+# NAC 上 base_url / api_key / api_type / stream 都会被平台覆盖,写了也不生效,故只留 model + 采样参数。
+# 本地裸跑 NexAU(不经 NAC)时需自行补 base_url / api_key(以及必要时 api_type)。
+llm_config:
+  model: ${env.LLM_MODEL}
+  temperature: 0.2
+
+tools:
+  # read_material 用于演示「工具结果拦截」：Agent 读取 materials/ 下含敏感词的材料后,
+  # 中间件会在下一轮模型调用前扫描 tool result 并终止本次 run。
+  # 注意不能用内置 read_file —— 它走沙箱文件系统(cwd=/home/user),看不到制品目录 /agent。
+  - name: read_material
+    yaml_path: ./tools/read_material.tool.yaml
+    binding: custom_tools.read_material:read_material
+
+# 本模板不挂 skill；键必须存在且为列表（平台静态校验要求 skills 显式声明）。
+skills: []
+
+middlewares:
+  # 敏感词中间件。lexicon_dir 指向 artifact 内的 lexicon/（部署后位于 /agent/lexicon）,
+  # 必须写绝对路径——中间件按进程 CWD 解析相对路径。词库组织与来源见 TEMPLATE.md 和 lexicon/README.md。
+  - import: nexau.archs.main_sub.execution.middleware.sensitive_word:SensitiveWordMiddleware
+    params:
+      lexicon_dir: /agent/lexicon
+      case_sensitive: false      # 英文敏感词建议 false;中文不受影响
+      block_input: true          # 拦用户输入（含 tool result）
+      block_output: true         # 拦模型输出
+      # ⚠️ input_action / output_action 默认是 mask（脱敏后继续跑），必须显式写 terminate
+      # 才是「命中即终止 run + 返回统一拒绝文案」的合规拦截语义。
+      # 备选 soft_reject：温和拒绝且 run 算正常完成，并会 mask 历史命中词（后续轮不再被同一词反复拦）。
+      input_action: terminate
+      output_action: terminate
+      raise_on_block: false      # false=按 action 优雅处理;true=抛 SensitiveContentBlockedError

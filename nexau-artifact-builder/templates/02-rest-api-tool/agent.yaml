@@ -1,0 +1,87 @@
+type: agent
+name: finnhub_agent
+description: >-
+  Financial data analyst agent powered by Finnhub API. Provides real-time stock
+  quotes, company profiles, financial metrics, earnings data, analyst
+  recommendations, insider activity, market news, SEC filings, and more.
+
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+
+llm_config:
+  # NAC 上这四个字段写了不生效，故一律不写：
+  #   base_url / api_key —— 平台无条件覆盖
+  #   api_type          —— 由模型卡派生值覆盖
+  #   stream            —— 流式路径强制 True
+  # 本地裸跑 NexAU（不经 NAC）时，需要自行在这里补 base_url / api_key。
+  model: ${env.LLM_MODEL}
+  max_tokens: 8192
+  temperature: 0.2
+
+max_iterations: 50
+max_context_tokens: 128000
+tool_call_mode: structured
+
+tools:
+  # --- Builtin tools (standard 3) ---
+  # 这三个不带 extra_kwargs，input_schema 里保留 additionalProperties: false 是安全的。
+  - name: read_file
+    yaml_path: tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: search_file_content
+    yaml_path: tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  - name: run_shell_command
+    yaml_path: tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+  # --- Finnhub REST 工具 ---
+  # 三件套：tools/<name>.tool.yaml（schema） + custom_tools/finnhub_api.py（实现） + 这里注册。
+  # extra_kwargs 在运行时 merge 进模型生成的参数，模型看不到 api_token，也不会去编一个。
+  # 注意：这里的 env 占位符读的是 **runtime scope** 环境变量（custom_tools 跑在 agent-runtime
+  # 进程内，不是沙箱内）；沙箱脚本要用的密钥才配到 sandbox scope。
+  #
+  # ⚠️ 模板裁剪：cookbook 原版注册了 18 个 Finnhub 工具，这里只保留 5 个代表。
+  #    完整清单见 tools/_FULL-TOOL-LIST.txt；custom_tools/finnhub_api.py 里 18 个函数都在。
+  #    要补回某个工具：写 tools/<name>.tool.yaml → 在此加一条 entry → systemprompt.md 的两张表各补一行。
+  #    只加 entry 不加 .tool.yaml 会在加载期 FileNotFoundError。
+
+  # --- Finnhub: Stock Core ---
+  - name: finnhub_quote
+    yaml_path: tools/finnhub_quote.tool.yaml
+    binding: custom_tools.finnhub_api:finnhub_quote
+    extra_kwargs:
+      api_token: ${env.X_FINNHUB_SECRET}
+  - name: finnhub_symbol_lookup
+    yaml_path: tools/finnhub_symbol_lookup.tool.yaml
+    binding: custom_tools.finnhub_api:finnhub_symbol_lookup
+    extra_kwargs:
+      api_token: ${env.X_FINNHUB_SECRET}
+  - name: finnhub_company_profile
+    yaml_path: tools/finnhub_company_profile.tool.yaml
+    binding: custom_tools.finnhub_api:finnhub_company_profile
+    extra_kwargs:
+      api_token: ${env.X_FINNHUB_SECRET}
+
+  # --- Finnhub: Fundamentals ---
+  - name: finnhub_basic_financials
+    yaml_path: tools/finnhub_basic_financials.tool.yaml
+    binding: custom_tools.finnhub_api:finnhub_basic_financials
+    extra_kwargs:
+      api_token: ${env.X_FINNHUB_SECRET}
+
+  # --- Finnhub: News ---
+  - name: finnhub_company_news
+    yaml_path: tools/finnhub_company_news.tool.yaml
+    binding: custom_tools.finnhub_api:finnhub_company_news
+    extra_kwargs:
+      api_token: ${env.X_FINNHUB_SECRET}
+
+# 本模板不挂 skill；该键必须存在且为列表，写成显式空列表（只留注释会被解析成 null）。
+skills: []
+
+middlewares:
+  # ⚠️ import 路径必须带 execution 这一层，漏了报 import 错误。
+  - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
+    params:
+      threshold: 0.6

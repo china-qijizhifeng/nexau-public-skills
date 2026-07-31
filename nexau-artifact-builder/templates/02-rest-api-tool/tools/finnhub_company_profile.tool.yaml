@@ -1,0 +1,16 @@
+type: tool
+name: finnhub_company_profile
+description: >-
+  Get company profile including name, ticker, country, currency, exchange, IPO
+  date, market cap, industry, logo URL, and more.
+# ⚠️ 本工具在 agent.yaml 里带 extra_kwargs（api_token），input_schema 切勿加 additionalProperties: false：
+# extra_kwargs 会被 merge 进参数后参与 jsonschema 校验，加了必报 "Additional properties are not allowed ('api_token' was unexpected)"。
+input_schema:
+  type: object
+  properties:
+    symbol:
+      type: string
+      description: Stock ticker symbol (e.g. 'AAPL', 'MSFT').
+  required:
+    - symbol
+  $schema: http://json-schema.org/draft-07/schema#

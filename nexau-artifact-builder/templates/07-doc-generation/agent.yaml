@@ -1,0 +1,43 @@
+type: agent
+name: govdoc_writer
+description: 公文写作 Agent — 解析用户提供的 PDF 文件，根据用户要求撰写公文，输出标准 Word 文档。
+max_context_tokens: 200000
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+tool_call_mode: structured
+max_iterations: 100
+
+llm_config:
+  # NAC 平台会无条件覆盖 base_url / api_key，api_type 由模型卡派生值覆盖，
+  # 流式路径还会强制 stream=True —— 这 4 个字段写在这里不生效，只是噪声，故删掉。
+  # ⚠️ 本地裸跑 NexAU（不经 NAC）时，需要自行在此补上 base_url / api_key 两项。
+  model: ${env.LLM_MODEL}
+  max_tokens: 32000
+  temperature: 0.2
+
+tools:
+  # 文件操作
+  - name: read_file
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: write_file
+    yaml_path: ./tools/write_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:write_file
+  # 搜索
+  - name: search_file_content
+    yaml_path: ./tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  # Shell（用于调用 pdf_to_md 脚本和 docx-report 生成）
+  - name: run_shell_command
+    yaml_path: ./tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+skills:
+  - ./skills/pdf_to_md
+  - ./skills/docx-report
+  - ./skills/govdoc-writing
+
+middlewares:
+  - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
+    params:
+      threshold: 0.6

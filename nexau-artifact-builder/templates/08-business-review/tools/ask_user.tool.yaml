@@ -1,0 +1,90 @@
+type: tool
+name: ask_user
+description: >-
+  Ask the user one or more questions to gather preferences, clarify
+  requirements, or make decisions.
+
+  Always set `type` explicitly. Question types:
+  - 'choice' (default): multiple-choice; MUST provide 2-4 `options`
+    (an 'Other' option is added automatically).
+  - 'text': free-form value the user types (path, id, name, number, …);
+    give a `placeholder`, no `options`.
+  - 'yesno': Yes/No confirmation.
+
+  No fixed 2-4 choices (e.g. the user must type a path or arbitrary
+  value)? Use `type: text`. Never send a 'choice' question with an empty
+  `options` list — it is rejected. When unsure, prefer 'text'.
+input_schema:
+  type: object
+  properties:
+    questions:
+      type: array
+      minItems: 1
+      maxItems: 4
+      description: Array of questions to ask the user
+      items:
+        type: object
+        required:
+          - question
+          - header
+        properties:
+          question:
+            type: string
+            description: >-
+              The complete question to ask the user. Should be clear, specific,
+              and end with a question mark.
+          header:
+            type: string
+            maxLength: 32
+            description: >-
+              Short label displayed as a chip/tag (max 32 chars). Examples:
+              "Auth method", "Library", "Specific Task".
+          type:
+            type: string
+            enum:
+              - choice
+              - text
+              - yesno
+            default: choice
+            description: >-
+              Question type — set explicitly. 'choice' (default) requires 2-4
+              `options`; 'text' is free-form input (give a `placeholder`, no
+              `options`); 'yesno' is Yes/No. With no predefined options you
+              MUST use 'text'; a 'choice' with empty `options` is rejected.
+          options:
+            type: array
+            description: >-
+              The selectable choices for 'choice' type questions. Provide 2-4
+              options. An 'Other' option is automatically added. Not needed for
+              'text' or 'yesno' types. Can't produce at least 2 real options?
+              Don't send an empty list — use `type: text` instead.
+            items:
+              type: object
+              required:
+                - label
+                - description
+              properties:
+                label:
+                  type: string
+                  description: >-
+                    The display text for this option (1-5 words). Example:
+                    "OAuth 2.0"
+                description:
+                  type: string
+                  description: >-
+                    Brief explanation of this option. Example: "Industry
+                    standard, supports SSO"
+          multiSelect:
+            type: boolean
+            description: >-
+              Only applies when type='choice'. Set to true to allow selecting
+              multiple options.
+          placeholder:
+            type: string
+            description: >-
+              Hint text shown in the input field; only applies when type='text'.
+              If you set a placeholder, also set `type: text`.
+  required:
+    - questions
+  additionalProperties: false
+  $schema: http://json-schema.org/draft-07/schema#

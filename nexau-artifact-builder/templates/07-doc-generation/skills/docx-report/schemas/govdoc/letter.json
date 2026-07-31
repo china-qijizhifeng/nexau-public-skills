@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "信函（商洽函/询问函/答复函）",
+  "description": "机关名称+函字，发文字号居左",
+  "type": "object",
+  "properties": {
+    "type": { "const": "letter" },
+    "gov_org": { "type": "string", "description": "发文机关名称" },
+    "doc_num": { "type": "string", "description": "发文字号" },
+    "title": { "type": "string", "description": "函件标题" },
+    "send_to": { "type": "string", "description": "主送机关" },
+    "date": { "type": "string" },
+    "cc_orgs": { "type": "string" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" }
+    },
+    "contact": {
+      "type": "object",
+      "properties": {
+        "dept": { "type": "string", "description": "联系部门" },
+        "phone": { "type": "string", "description": "联系电话" }
+      }
+    },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "gov_org", "doc_num", "title", "send_to", "date", "sections"]
+}

@@ -1,0 +1,86 @@
+type: tool
+name: map_vec_batch_search
+description: >-
+  Hybrid-search a CROSS-PRODUCT of N queries × M vector KBs in parallel
+  (so total HTTP calls = len(queries) × len(knowledge_base_ids)), then
+  merge & dedup hits by their chunk id. When a chunk is hit by multiple
+  queries, `matched_queries` accumulates every query that triggered it
+  (handy as a confidence signal — if a chunk shows up under several
+  synonyms, it's almost certainly relevant). Per-pair errors are
+  isolated in `errors[]`. Hard-capped at 30 query×KB pairs to avoid
+  runaway.
+  When to use:
+    - The user supplied several KB ids and you want to query them all at
+      once → 1 query × M KBs.
+    - Wording mismatch likely (e.g. "政务" vs "政府") → M synonym queries
+      × 1 KB. Each synonym is run separately so the search engine can
+      score it cleanly; results are then unioned.
+    - Both axes — multiple user-supplied KBs + multiple synonym queries
+      → e.g. 2-3 queries × 2-3 KBs.
+  Even single-query / single-KB callers MUST use this tool — pass
+  `queries=["<your noun>"]` and `knowledge_base_ids=["<the id>"]`. There
+  is no separate single-shot search tool; this one handles N=1 cleanly.
+  Hits are slim (LLM-actionable fields only): page_content, title,
+  file_name, file_id, knowledge_base_id, matched_queries[], optional
+  segment_position, optional `fallback: true` (when the hybrid call had
+  to silently degrade to vector search for that KB). Internal scores /
+  ids / metadata are dropped — judge relevance from page_content.
+input_schema:
+  type: object
+  properties:
+    queries:
+      type: array
+      items:
+        type: string
+      description: >-
+        List of search queries to run against EACH knowledge base
+        (cross-product). Each query should be a CORE NOUN or short
+        phrase (1-3 chars / 1 noun) — do not pass full sentences with
+        question words. ALWAYS prefer this over running the tool
+        multiple times: pass synonyms / related terms as a list, e.g.
+        `["政务", "政府", "行政"]`. Even when you only have ONE query
+        word, still wrap it in a 1-element list: `queries=["政务"]`.
+      minItems: 1
+    knowledge_base_ids:
+      type: array
+      items:
+        type: string
+      description: >-
+        Vector knowledge_base_ids to search. Typically 2-5; rarely useful
+        past 8.
+      minItems: 1
+    top_k:
+      type: integer
+      description: >-
+        Optional. (i) Per-call cap inside the hybrid `config` (default 5);
+        (ii) also serves as the cap on the merged/deduped result set.
+      minimum: 1
+      maximum: 50
+    bm_top_k:
+      type: integer
+      description: "Optional. BM25 candidate count per call. Defaults to top_k."
+      minimum: 1
+      maximum: 100
+    score_threshold:
+      type: number
+      description: "Optional. Drop hits below this score."
+    weights:
+      type: array
+      items:
+        type: number
+      description: "Optional. [bm25_weight, vector_weight], default [0.5, 0.5]."
+      minItems: 2
+      maxItems: 2
+    reranker:
+      type: string
+      description: "Optional. Reranker model name."
+    reranker_score_threshold:
+      type: number
+      description: "Optional. Drop hits whose reranker score is below this."
+  required:
+    - queries
+    - knowledge_base_ids
+  # ⚠️ 不能加 `additionalProperties: false`：本工具在 agent.yaml 里用 extra_kwargs
+  # 注入 app_key / app_secret / user_id，框架校验参数时不会把 extra_kwargs 剔掉，
+  # 加了必然抛 "Additional properties are not allowed ('app_key' was unexpected)"。
+  $schema: http://json-schema.org/draft-07/schema#

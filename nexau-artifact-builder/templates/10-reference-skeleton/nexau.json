@@ -1,0 +1,11 @@
+{
+  "agents": {
+    "archive_assistant": "agent.yaml"
+  },
+  "excluded": [
+    ".nexau/",
+    ".env",
+    "__pycache__/",
+    "sub_agents/*/.nexau/"
+  ]
+}

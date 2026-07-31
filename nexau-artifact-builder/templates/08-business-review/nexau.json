@@ -1,0 +1,10 @@
+{
+    "agents": {
+      "house_fund_review": "agent.yaml"
+    },
+    "excluded": [
+      ".nexau/",
+      ".env",
+      "__pycache__/"
+    ]
+  }

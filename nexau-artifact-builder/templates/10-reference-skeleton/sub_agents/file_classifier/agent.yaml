@@ -1,0 +1,50 @@
+# 子代理：file_classifier —— 只读文件分类子代理
+# 主 agent 通过 Agent 工具，把"判定这一批文件分别属于哪个档案门类"的分类任务并行委派给它。
+# 它只读不写：读文件内容（含扫描件）+ 判定门类 + 汇总，不重命名、不移动、不改任何文件——归档动作归主 agent。
+# 给多个 file_classifier 分别处理不同批次，可显著加速一次大批量归档。
+type: agent
+name: file_classifier
+description: 只读文件分类子代理，负责读一批文件、判定档案门类，把分类结果汇总给主 agent，不做任何写操作。
+
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+
+# NAC 最小写法：base_url / api_key / api_type / stream 会被平台覆盖，写了不生效。
+# ⚠️ 本地裸跑 NexAU（不经 NAC）时需自行补回 base_url / api_key。
+llm_config:
+  model: ${env.LLM_MODEL}
+  max_tokens: 16000
+  temperature: 1
+
+tool_call_mode: structured
+max_iterations: 80
+max_context_tokens: 128000
+
+# 只给"列目录 + 读取（含扫描件）+ 收尾"工具，刻意不给写文件/Shell——分类归分类，归档动作归主 agent
+tools:
+  - name: list_directory
+    yaml_path: ./tools/list_directory.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:list_directory
+  - name: read_file
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: read_visual_file
+    yaml_path: ./tools/read_visual_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_visual_file
+  - name: complete_task
+    yaml_path: ./tools/complete_task.tool.yaml
+    binding: nexau.archs.tool.builtin.session_tools:complete_task
+
+# ⚠️ 必填：挂了 complete_task 还必须把它登记进 stop_tools，否则它只是个普通工具——
+#    子代理不会因调用它而结束，result 也不会成为返回给主 agent 的 final_response。
+stop_tools:
+  - complete_task
+
+# ⚠️ 三键必写（tools / skills / middlewares），子代理也不例外。
+#    框架侧这两个键其实是可选的（`schema.py:130 middlewares: ... | None = None`、
+#    `config/base.py:72 skills: list = Field(default_factory=list)`），平台静态校验器也
+#    【不会】递归进 sub_agents/ 目录，所以省略它们不会报错——但制品根 agent.yaml 缺了就是
+#    `skills.invalid_type` / `middlewares.invalid_type`。两边写法保持一致，别让人抄走一个
+#    在根目录会挂掉的范本。本子代理不带知识库、不需要拦截器，空列表就是语义正确的声明。
+skills: []
+middlewares: []

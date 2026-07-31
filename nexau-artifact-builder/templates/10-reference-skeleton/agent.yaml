@@ -1,0 +1,215 @@
+# ============================================================================
+#  档案智能归档助手  ——  档案/文件智能归档（archive assistant）
+# ----------------------------------------------------------------------------
+#  以「档案智能归档」为示范场景的参考骨架——本地文件/多模态工具集的经典用法：
+#    · 文件工具（读 / 批量读 / 搜索 / 通配 / 列目录 / 写归档清单）
+#    · 多模态读图（读扫描件 / 照片，识别其中文字与画面）
+#    · Shell（mkdir / mv / 重命名，实际执行归档动作）
+#    · 会话工具（任务清单 / 提问 / 记忆归档规则）
+#    · 自定义工具（file_fingerprint：算文件指纹识别重复 + 补元数据）
+#    · 子代理（file_classifier 只读并行分类）
+#    · Skill（归档规则：分类体系 / 命名规范 / 元数据）
+#    · 4 个内置中间件（全部启用）+ MCP 接入示例
+#
+#  ⚠️ 换别的业务时按注释【按需删减】——不用的工具/中间件/MCP 直接删，
+#     工具越少，模型选错概率越低、上下文越省。
+#
+#  所有 binding 路径均已对 nexau-py 源码核实。
+#
+#  ⚠️ 关于 ${env.变量名}：NexAU 在 yaml.safe_load 之前对【整个文件文本】做正则替换——
+#     连注释里的这种写法也会被解析，变量没设就直接加载失败（不支持默认值/转义）。
+#     它只读【runtime scope】环境变量，不新增任何进程环境变量。所以本文件只保留
+#     1 个必填的 ${env.LLM_MODEL}；其余注释示例里的密钥都写成 <占位符>，
+#     启用时再改成 ${env.变量名} 形式并在【runtime scope】配好该变量。
+#     （run_shell_command 在沙箱里跑的脚本读不到 runtime scope，要用 sandbox scope。）
+# ============================================================================
+
+type: agent
+name: archive_assistant
+description: >-
+  档案/文件智能归档助手：读懂一堆杂乱文件（含扫描件图片）的内容，按归档规则
+  分类、重命名、归档到对应目录，并生成归档清单。保持原件内容不变。
+  文件工具 + 多模态 + Shell + 子代理并行分类 + 中间件 + Skill。
+  复制后可直接当归档助手用，也可裁剪改写成其它本地业务。
+
+# ---- 系统提示 -------------------------------------------------------------
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja          # string | file | jinja（jinja 可用 {{ date }} {{ working_directory }}）
+# system_prompt_suffix: ""         # 可选：追加在 system prompt 末尾的固定后缀
+
+# ---- LLM 配置 -------------------------------------------------------------
+#  NAC 上的最小写法：只写 model + 采样参数。
+#  base_url / api_key 被平台无条件覆盖，api_type 由模型卡派生，stream 在流式路径强制 True
+#  —— 这四个字段在 NAC 上写了也不生效，删掉减少噪声。
+#  ⚠️ 本地裸跑 NexAU（不经 NAC）时，需要自行补回 base_url / api_key（以及必要时 api_type）。
+llm_config:
+  model: ${env.LLM_MODEL}          # 跟随项目默认模型；项目一张可见模型卡都没有时该 env 不注入 → 加载 ConfigError
+  max_tokens: 32000
+  temperature: 1
+
+# ---- 执行控制 -------------------------------------------------------------
+tool_call_mode: structured         # structured（推荐）
+stop_tools:                        # 调用到这些工具即结束本轮，其返回值成为 final_response
+  - ask_user                       # ★ 挂了 ask_user 就必须登记进来，否则提完问不停、继续瞎跑
+max_iterations: 300                # 单次任务最多迭代轮数（默认 100）
+max_context_tokens: 200000         # 上下文上限（默认 128000）
+max_running_subagents: 5           # 默认 5。⚠️ 目前是【空旋钮】：executor.py:291 只把它存成属性，
+                                   #   全仓库没有任何地方消费它做限流，设了不改变并发。
+                                   #   要控子代理并发只能靠 systemprompt 里的调度规则。
+timeout: 300                       # ⚠️ 也是【空旋钮】：它流进 ExecutionConfig 但 Executor 构造时
+                                   #   根本没接（agent.py:754-777 的参数列表里没有 timeout，
+                                   #   Executor.__init__ 也无该形参）。真正生效的超时是
+                                   #   llm_config.timeout（每次 LLM 请求级）。
+retry_attempts: 5                  # LLM 调用失败重试次数（默认 5）
+retry_backoff_max_seconds: 30      # 重试最大退避秒数（默认 30）
+
+# ===========================================================================
+#  工具：本地文件 / 多模态 / Shell / 会话工具（name + yaml_path + binding）
+#  注：档案要保持原貌，本助手不挂内容编辑工具（replace/multiedit/apply_patch）。
+# ===========================================================================
+tools:
+  # ---- 读取（file_tools + 多模态）—— 读懂每份文件 -------------------------
+  - name: read_file                     # 读文档/文本（也支持 PDF/音频）
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: read_visual_file              # 读扫描件/照片，识别其中文字与画面（档案归档关键）
+    yaml_path: ./tools/read_visual_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_visual_file
+  - name: read_many_files               # glob 批量读取（一次摸清一批待归档文件）
+    yaml_path: ./tools/read_many_files.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_many_files
+
+  # ---- 浏览/定位（file_tools）---------------------------------------------
+  - name: list_directory                # 看待归档目录里有什么
+    yaml_path: ./tools/list_directory.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:list_directory
+  - name: Glob                          # 通配符匹配查文件（⚠️ 必须用 canonical 表的大写 Glob）
+    yaml_path: ./tools/Glob.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:glob
+  - name: search_file_content           # 全文正则搜（按关键词找含某内容的文件）
+    yaml_path: ./tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+
+  # ---- 产出（file_tools）-------------------------------------------------
+  - name: write_file                    # 写归档清单 / 索引 / 元数据目录（不改原件）
+    yaml_path: ./tools/write_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:write_file
+
+  # ---- Shell（shell_tools）—— 实际执行归档动作 ----------------------------
+  - name: run_shell_command             # mkdir / mv / 重命名，把文件归到对应目录
+    yaml_path: ./tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+  # ---- 会话管理（session_tools）------------------------------------------
+  - name: write_todos                   # 批量归档的多步任务清单
+    yaml_path: ./tools/write_todos.tool.yaml
+    binding: nexau.archs.tool.builtin.session_tools:write_todos
+  - name: ask_user                      # 分类拿不准时结构化提问
+    yaml_path: ./tools/ask_user.tool.yaml
+    binding: nexau.archs.tool.builtin.session_tools:ask_user
+  - name: save_memory                   # 记住归档规则/分类体系，跨会话复用
+    yaml_path: ./tools/save_memory.tool.yaml
+    binding: nexau.archs.tool.builtin.session_tools:save_memory
+
+  # ---- 自定义工具：文件指纹（通过沙箱读文件）-------------------------------
+  # 实现见 custom_tools/file_fingerprint.py；schema 见 tools/file_fingerprint.tool.yaml
+  # 用途：归档前算文件指纹（sha256 识别重复扫描件 + 补元数据）。
+  # ★ 要读 agent 正在处理的文件，工具函数【必须声明 agent_state】，框架自动注入；
+  #   再用 get_sandbox(agent_state) 走沙箱 API 读（裸 os.path 读不到 NAC 沙箱里的文件）。
+  #   agent_state 不写进 input_schema。需注入密钥另用 extra_kwargs（示例见「金融数据」样例）。
+  # ⚠️ extra_kwargs 与 input_schema 的 `additionalProperties: false` 互斥：extra_kwargs 会被
+  #   合并进参数后一起送去 jsonschema 校验（只有 agent_state/global_storage/sandbox/ctx 被剔除），
+  #   必报 "Additional properties are not allowed"。一旦给某工具加 extra_kwargs，
+  #   就把它 *.tool.yaml 里的 `additionalProperties: false` 删掉（别把密钥写进 properties）。
+  #   本工具只用 agent_state 注入、没有 extra_kwargs，所以 additionalProperties: false 可保留。
+  - name: file_fingerprint
+    yaml_path: ./tools/file_fingerprint.tool.yaml
+    binding: custom_tools.file_fingerprint:file_fingerprint
+
+# ===========================================================================
+#  Skills：可插拔的"领域大脑"。模型按需 LoadSkill 加载
+#  （声明 skills 后，LoadSkill 工具会自动注入，无需手动加到 tools）
+# ===========================================================================
+#  部署后 skill 落在沙箱 /home/user/.skills/<本地目录 basename>/（此处即 .../archive-rules/）。
+#  目录 basename 决定路径；SKILL.md frontmatter 的 name 决定 LoadSkill 用什么名字调用，两者可不一致。
+skills:
+  - ./skills/archive-rules           # 归档规则：分类体系 / 命名规范 / 元数据（SKILL.md + references/）
+
+# ===========================================================================
+#  子代理（sub_agents）：把可并行/只读的子任务委派出去
+#  （声明 sub_agents 后，Agent 工具会自动注入）
+#  name 即调用标识；config_path 指向子代理自己的 agent.yaml
+# ===========================================================================
+sub_agents:
+  - name: file_classifier            # 只读分类子代理：并行读一批文件、判定门类，不改/不移动
+    config_path: ./sub_agents/file_classifier/agent.yaml
+
+# ===========================================================================
+#  MCP server：接入外部 HTTP/stdio/sse 工具服务
+#  档案场景可接档案管理系统(DMS) / 元数据库等；不需要就整段删除。
+#  ⚠️ 下面是【本机调试】示例：NAC K8s 沙箱里 host.docker.internal 不解析。连不上不会导致
+#     加载失败（框架只 log warning），但每次拉起 agent 都会白等 timeout 秒——不接就删掉。
+# ===========================================================================
+mcp_servers:
+  - name: archive_dms
+    type: http                       # stdio | http | sse
+    url: http://host.docker.internal:8000/mcp
+    headers:
+      Accept: application/json, text/event-stream
+      # 公网部署加鉴权：Authorization: Bearer <MCP_TOKEN>   # 启用时改成 ${env.变量名} 注入
+      Host: localhost:8000           # 本机调试绕过 MCP server 的 DNS rebinding 防护
+    timeout: 30
+
+# ===========================================================================
+#  中间件（middlewares）：挂在执行前后的拦截器
+#  ----------------------------------------------------------------------------
+#  下面每条的 import 路径与参数名均已对 nexau-py 源码核实。不需要的整段删掉即可。
+#  ⚠️ 执行顺序【不是】一律按声明顺序（hooks.py）：
+#     · before_agent / before_model / before_tool / stream_chunk —— 正向，按声明顺序
+#     · after_agent / after_model / after_tool —— 【倒序】（`for m in reversed(self.middlewares)`）
+#     · wrap_model_call / wrap_tool_call —— 洋葱嵌套，index 0 在最外层
+#     本模板恰好看不出差别：唯一有两个参与者的阶段是 before_model（①和③都实现了它），
+#     而它正好是正向的；倒序/洋葱那几个阶段各只有一个参与者（②只有 after_tool、
+#     ④只有 before_agent、①独占 after_model 与 wrap_model_call）。同阶段挂上两个就会咬你。
+#     完整逐 hook 对照见 ../../references/middlewares.md §4。
+# ===========================================================================
+middlewares:
+  # ① ContextCompactionMiddleware —— 多轮长对话时自动压缩历史（推荐常开）
+  #    full 参数见源码 context_compaction/config.py 的 CompactionConfig
+  - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
+    params:
+      threshold: 0.6                 # 上下文用量超此比例触发压缩（默认 0.75；注意是 threshold 不是 threshold_ratio）
+      # auto_compact: true           # 是否自动压缩（默认 true）
+      # emergency_compact_enabled: true  # 濒临溢出时强制压缩（默认 true）
+      # trigger: token_threshold     # token_threshold | time_based（默认 token_threshold）
+      # gap_threshold_minutes: 5     # time_based 触发专用
+      # compaction_strategy: tool_result_compaction  # tool_result_compaction | llm_summary（sliding_window 已废弃）
+      # keep_iterations: 3           # 保留最近 N 轮不压缩（默认 3）
+      # save_history: true           # 压缩时把原始消息归档到 sandbox（默认 true）
+
+  # ② LongToolOutputMiddleware —— 单次工具输出过长时截断，保留头尾（推荐常开）
+  - import: nexau.archs.main_sub.execution.middleware.long_tool_output:LongToolOutputMiddleware
+    params:
+      max_output_chars: 10000        # 超过此字符数触发截断（默认 10000）
+      head_lines: 50                 # 保留头部行数（默认 50）
+      tail_lines: 30                 # 保留尾部行数（默认 30）
+      head_chars: 5000               # 保留头部字符数（默认 5000）
+      tail_chars: 5000               # 保留尾部字符数（默认 5000，约束：head_chars+tail_chars ≤ max_output_chars）
+      bypass_tool_names:             # 这些工具的输出不截断
+        - run_shell_command
+
+  # ③ RoundAndTokenReminderMiddleware —— 每轮给模型注入"还剩几轮/token 预算"提示
+  - import: nexau.archs.main_sub.execution.middleware.round_and_token_reminder:RoundAndTokenReminderMiddleware
+    params:
+      max_context_tokens: 200000     # 必填，无默认（与上面顶层 max_context_tokens 保持一致）
+      desired_max_tokens: 16384      # 期望单次回复 token 上限（默认 16384）
+
+  # ④ RuntimeEnvironmentMiddleware —— 把【稳定的】运行时事实追加到首条 system 消息：
+  #    工作目录 / 操作系统 / shell 后端，仅此三项。
+  #    ⚠️ 它【刻意不注入】日期、用户名、任意环境变量（runtime_environment.py:41-46 的 docstring
+  #       原话：更易变的值应留在显式的用户模板里）。要日期就在 systemprompt 里写 `{{ date }}`
+  #       ——那是框架运行时事实层提供的 Jinja 变量（runtime_context.py:110-134），与本中间件无关。
+  #    ⚠️ 三个值全空时静默不注入（_render_environment: `if not any(values.values()): return ""`）。
+  - import: nexau.archs.main_sub.execution.middleware.runtime_environment:RuntimeEnvironmentMiddleware
+    params: {}                     # 全用默认；params 键本身必填（缺键平台静态校验器报 middlewares.entry.missing_key）
+    #   template: "..."              # 可选：自定义注入模板（默认 DEFAULT_RUNTIME_ENVIRONMENT_TEMPLATE）

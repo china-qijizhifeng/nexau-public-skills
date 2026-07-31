@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "议案",
+  "description": "沿用内部报告版式，适用于提交会议审议的议案文本",
+  "type": "object",
+  "properties": {
+    "type": { "const": "proposal" },
+    "title": { "type": "string", "description": "报告标题" },
+    "subtitle": { "type": "string", "description": "副标题/编号" },
+    "org": { "type": "string", "description": "编制单位" },
+    "date": { "type": "string", "description": "编制日期" },
+    "confidential": { "type": "string", "enum": ["公开", "内部资料", "秘密"], "default": "内部资料" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" }
+    },
+    "kv_tables": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/kv_table" },
+      "description": "键值对表格（如家庭信息）"
+    },
+    "data_tables": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/data_table" },
+      "description": "数据表格（如政策匹配结果）"
+    },
+    "policy_refs": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/policy_ref" }
+    },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "title", "org", "date", "sections"]
+}

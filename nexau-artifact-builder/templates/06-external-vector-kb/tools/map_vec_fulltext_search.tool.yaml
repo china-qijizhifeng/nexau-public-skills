@@ -1,0 +1,32 @@
+type: tool
+name: map_vec_fulltext_search
+description: >-
+  Full-text (BM25-style) search inside a vector knowledge base — pure
+  keyword matching, no semantic embedding. Best when you need to locate an
+  EXACT phrase, code, identifier, or quoted clause that semantic search
+  might dilute. For most "general question" cases prefer map_vec_batch_search,
+  which combines lexical and semantic signals. Same response shape as the
+  other search tools. knowledge_base_id falls back to MAP_VECTOR_KB_ID if
+  omitted.
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: The exact word/phrase to locate.
+    knowledge_base_id:
+      type: string
+      description: >-
+        Optional. Vector knowledge_base_id. Falls back to MAP_VECTOR_KB_ID.
+    top_k:
+      type: integer
+      description: "Optional. Max hits, default server-side."
+      minimum: 1
+      maximum: 50
+    score_threshold:
+      type: number
+      description: "Optional. Drop hits below this BM25 score."
+  required:
+    - query
+  # ⚠️ 不能加 `additionalProperties: false`（本工具用 extra_kwargs 注入鉴权三要素）。
+  $schema: http://json-schema.org/draft-07/schema#

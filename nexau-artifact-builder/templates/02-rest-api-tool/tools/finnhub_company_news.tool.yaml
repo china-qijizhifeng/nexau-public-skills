@@ -1,0 +1,24 @@
+type: tool
+name: finnhub_company_news
+description: >-
+  Get recent news articles for a specific company. Returns up to 10 articles
+  with headline, source, summary, and URL.
+# ⚠️ 本工具在 agent.yaml 里带 extra_kwargs（api_token），input_schema 切勿加 additionalProperties: false：
+# extra_kwargs 会被 merge 进参数后参与 jsonschema 校验，加了必报 "Additional properties are not allowed ('api_token' was unexpected)"。
+input_schema:
+  type: object
+  properties:
+    symbol:
+      type: string
+      description: Stock ticker symbol (e.g. 'AAPL', 'MSFT').
+    from_date:
+      type: string
+      description: Start date YYYY-MM-DD.
+    to_date:
+      type: string
+      description: End date YYYY-MM-DD.
+  required:
+    - symbol
+    - from_date
+    - to_date
+  $schema: http://json-schema.org/draft-07/schema#

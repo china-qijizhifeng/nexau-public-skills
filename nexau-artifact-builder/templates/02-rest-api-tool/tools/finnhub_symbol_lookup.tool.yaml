@@ -1,0 +1,20 @@
+type: tool
+name: finnhub_symbol_lookup
+description: >-
+  Search for stock/crypto/forex symbols by name, ISIN, or CUSIP. Returns up to
+  10 matching symbols.
+# ⚠️ 本工具在 agent.yaml 里带 extra_kwargs（api_token），input_schema 切勿加 additionalProperties: false：
+# extra_kwargs 会被 merge 进参数后参与 jsonschema 校验，加了必报 "Additional properties are not allowed ('api_token' was unexpected)"。
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: Search query — company name, ISIN, or CUSIP.
+    exchange:
+      type: string
+      description: >-
+        Optional: Filter results by exchange code (e.g. 'US', 'TO', 'L').
+  required:
+    - query
+  $schema: http://json-schema.org/draft-07/schema#

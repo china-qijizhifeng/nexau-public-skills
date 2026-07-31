@@ -1,0 +1,535 @@
+#!/usr/bin/env bash
+# docx-report 构建脚本（通用文档 + 公文）
+# 用法：
+#   ./scripts/build init                                    初始化 .NET 项目
+#   ./scripts/build render <type> <input.json> <output.docx> JSON 参数化生成
+#   ./scripts/build batch <type> <input_dir> <output_dir>   批量生成
+#   ./scripts/build diff <type> <old.json> <new.json> <out.docx> 版本对比
+#   ./scripts/build templates                              查看模板与调用参数
+#   ./scripts/build check-index                            校验模板索引完整性
+#   ./scripts/build [output.docx]                           传统模式（编译 Program.cs）
+#   ./scripts/build pdf [output.pdf]                        传统模式 + PDF 转换
+#   ./scripts/build ofd <input.docx> [output.ofd]           docx → OFD 转换
+#   ./scripts/build warmup                                  预编译渲染引擎（首次使用前执行）
+set -euo pipefail
+
+# 抑制 .NET SDK 首次运行行为（telemetry、welcome message、workload extraction）
+# 这些在沙箱/离线环境中会导致首次 dotnet build 静默失败
+export DOTNET_NOLOGO=1
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+
+SKILL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TEMPLATE_DIR="$SKILL_DIR/templates"
+WORK_DIR="$(pwd)"
+
+cmd="${1:-build}"
+
+case "$cmd" in
+  check-index)
+    INDEX_FILE="$SKILL_DIR/template-index.json"
+    ENGINE_FILE="$SKILL_DIR/templates/GovDocEngine.cs"
+    if [ ! -f "$INDEX_FILE" ]; then
+      echo "❌ 未找到模板索引：$INDEX_FILE"
+      exit 1
+    fi
+    if ! command -v python3 &>/dev/null; then
+      echo "❌ 未找到 python3，无法校验模板索引"
+      exit 1
+    fi
+    python3 - "$INDEX_FILE" "$SKILL_DIR" "$ENGINE_FILE" <<'PY'
+import json
+import os
+import re
+import sys
+
+index_file, skill_dir, engine_file = sys.argv[1], sys.argv[2], sys.argv[3]
+errors = []
+warnings = []
+
+def check(cond, msg):
+    if not cond:
+        errors.append(msg)
+
+with open(index_file, encoding="utf-8") as f:
+    data = json.load(f)
+
+templates = data.get("templates")
+check(isinstance(templates, list) and len(templates) > 0, "`templates` 必须是非空数组")
+template_types = set()
+required_by_type = {}
+
+if isinstance(templates, list):
+    for i, t in enumerate(templates):
+        if not isinstance(t, dict):
+            errors.append(f"templates[{i}] 必须是对象")
+            continue
+        t_type = str(t.get("type", "")).strip()
+        family = str(t.get("family", "")).strip()
+        schema = str(t.get("schema", "")).strip()
+        test_input = str(t.get("test_input", "")).strip()
+        required = t.get("required")
+
+        if not t_type:
+            errors.append(f"templates[{i}] 缺少 type")
+            continue
+        if t_type in template_types:
+            errors.append(f"模板类型重复：{t_type}")
+        template_types.add(t_type)
+
+        if not family:
+            errors.append(f"templates[{i}]({t_type}) 缺少 family")
+        if not schema:
+            errors.append(f"templates[{i}]({t_type}) 缺少 schema")
+        if not test_input:
+            errors.append(f"templates[{i}]({t_type}) 缺少 test_input")
+        if not isinstance(required, list) or not required:
+            errors.append(f"templates[{i}]({t_type}) 的 required 必须是非空数组")
+        else:
+            required_by_type[t_type] = [str(x).strip() for x in required if str(x).strip()]
+            if not required_by_type[t_type]:
+                errors.append(f"templates[{i}]({t_type}) 的 required 不能只包含空值")
+
+        if schema:
+            schema_abs = os.path.join(skill_dir, schema)
+            if not os.path.isfile(schema_abs):
+                errors.append(f"schema 文件不存在：{schema}")
+            else:
+                try:
+                    with open(schema_abs, encoding="utf-8") as sf:
+                        schema_data = json.load(sf)
+                    schema_required = schema_data.get("required", [])
+                    if isinstance(required, list) and isinstance(schema_required, list):
+                        index_required = {str(x).strip() for x in required if str(x).strip()}
+                        schema_required_set = {str(x).strip() for x in schema_required if str(x).strip() and str(x).strip() != "type"}
+                        if index_required != schema_required_set:
+                            errors.append(
+                                f"templates[{i}]({t_type}) 的 required 与 schema 不一致："
+                                f"index={sorted(index_required)} schema={sorted(schema_required_set)}"
+                            )
+                    else:
+                        errors.append(f"templates[{i}]({t_type}) 或 schema.required 不是数组")
+                except Exception as ex:
+                    errors.append(f"读取 schema 失败（{schema}）：{ex}")
+        if test_input:
+            test_abs = os.path.join(skill_dir, test_input)
+            if not os.path.isfile(test_abs):
+                errors.append(f"test_input 文件不存在：{test_input}")
+
+aliases = data.get("aliases", {})
+if not isinstance(aliases, dict):
+    errors.append("`aliases` 必须是对象")
+    aliases = {}
+
+for alias, target in aliases.items():
+    alias = str(alias).strip()
+    target = str(target).strip()
+    if not alias:
+        errors.append("aliases 中存在空别名键")
+        continue
+    if target not in template_types:
+        errors.append(f"别名 `{alias}` 指向未知模板类型 `{target}`")
+
+# 引擎实现覆盖检查：模板类型必须在 Render switch 中有实现
+if os.path.isfile(engine_file):
+    with open(engine_file, encoding="utf-8") as f:
+        engine = f.read()
+    render_types = set(re.findall(r'case\s+"([^"]+)"\s*:\s*Render[A-Za-z]+\(', engine))
+    missing_impl = sorted(template_types - render_types)
+    extra_impl = sorted(render_types - template_types)
+    for t in missing_impl:
+        errors.append(f"模板 `{t}` 在 template-index.json 中存在，但引擎未实现 Render 分支")
+    for t in extra_impl:
+        warnings.append(f"引擎存在 `{t}` 的 Render 分支，但 template-index.json 未声明")
+else:
+    warnings.append(f"未找到引擎文件：{engine_file}")
+
+if errors:
+    print("❌ template-index 校验失败：")
+    for e in errors:
+        print(f"  - {e}")
+    if warnings:
+        print("⚠️ 附加提醒：")
+        for w in warnings:
+            print(f"  - {w}")
+    sys.exit(1)
+
+print("✅ template-index 校验通过")
+print(f"  - 模板数: {len(template_types)}")
+print(f"  - 别名数: {len(aliases)}")
+if warnings:
+    print("⚠️ 附加提醒：")
+    for w in warnings:
+        print(f"  - {w}")
+PY
+    ;;
+
+  warmup)
+    echo "--- 预热渲染引擎 ---"
+    ENGINE_DIR="$SKILL_DIR/templates"
+    DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" 2>/dev/null | head -1) || true
+    if [ -n "$DLL" ]; then
+      echo "✅ 引擎已编译，无需预热"
+      exit 0
+    fi
+    RENDER_DIR=$(mktemp -d)
+    cp "$ENGINE_DIR/GovDoc.csproj" "$RENDER_DIR/"
+    cp "$ENGINE_DIR/GovDocEngine.cs" "$RENDER_DIR/Program.cs"
+    dotnet --info > /dev/null 2>&1 || true
+    (cd "$RENDER_DIR" && dotnet restore --verbosity quiet 2>&1) || true
+    (cd "$RENDER_DIR" && dotnet build -c Release --nologo -v q 2>&1) || {
+      echo "⚠️  首次编译失败，重试..."
+      sleep 1
+      (cd "$RENDER_DIR" && dotnet build -c Release --nologo 2>&1) || {
+        echo "❌ 引擎编译失败"
+        rm -rf "$RENDER_DIR"
+        exit 1
+      }
+    }
+    mkdir -p "$ENGINE_DIR/bin"
+    cp -R "$RENDER_DIR/bin/." "$ENGINE_DIR/bin/"
+    rm -rf "$RENDER_DIR"
+    echo "✅ 引擎预热完成，后续 render 可直接使用"
+    ;;
+
+  templates)
+    INDEX_FILE="$SKILL_DIR/template-index.json"
+    if [ ! -f "$INDEX_FILE" ]; then
+      echo "❌ 未找到模板索引：$INDEX_FILE"
+      exit 1
+    fi
+    if ! command -v python3 &>/dev/null; then
+      echo "❌ 未找到 python3，无法读取模板索引"
+      exit 1
+    fi
+    python3 - "$INDEX_FILE" <<'PY'
+import json
+import sys
+
+index_file = sys.argv[1]
+with open(index_file, encoding="utf-8") as f:
+    data = json.load(f)
+
+print("=== docx-report 模板清单（来源：template-index.json）===")
+default = data.get("default_template")
+if default:
+    print(f"默认模板：{default}")
+
+templates = data.get("templates", [])
+if templates:
+    print("\n基础模板：")
+    for t in templates:
+        t_type = t.get("type", "")
+        family = t.get("family", "")
+        scenarios = t.get("scenarios", [])
+        hint = "、".join(scenarios[:3]) if scenarios else "-"
+        print(f"  {t_type:<12} [{family}] {hint}")
+
+aliases = data.get("aliases", {})
+if aliases:
+    grouped = {}
+    for alias, target in aliases.items():
+        grouped.setdefault(target, []).append(alias)
+
+    print("\n别名映射：")
+    for target in sorted(grouped.keys()):
+        alias_list = " / ".join(sorted(grouped[target]))
+        print(f"  {target:<12} <- {alias_list}")
+PY
+    ;;
+
+  init)
+    echo "=== 初始化 docx-report 工作环境（当前目录：$WORK_DIR） ==="
+    if ! command -v dotnet &>/dev/null; then
+      echo "❌ 未找到 dotnet，请先安装 .NET SDK"; exit 1
+    fi
+    echo "✅ dotnet $(dotnet --version)"
+    cp "$TEMPLATE_DIR/GovDoc.csproj" "$WORK_DIR/"
+    dotnet restore --verbosity quiet
+    echo "✅ 初始化完成：$WORK_DIR"
+    echo ""
+    echo "参数化模式（推荐）："
+    echo "  $0 render notice input.json output.docx"
+    echo ""
+    echo "传统模式（模板参考）："
+    for f in "$TEMPLATE_DIR"/GovDoc*.cs; do
+      echo "  $(basename "$f")"
+    done
+    ;;
+
+  render)
+    shift
+    if [ $# -lt 3 ]; then
+      echo "❌ 用法：$0 render <type> <input.json> <output.docx>"
+      echo "   类型来源：template-index.json（可先执行：$0 templates）"
+      exit 1
+    fi
+    doc_type="$1"; input_json="$2"; output_docx="$3"
+
+    # ---- JSON 预校验（在调用 dotnet 之前，用 Python 快速检查） ----
+    if command -v python3 &>/dev/null && [ -f "$input_json" ]; then
+      python3 - "$doc_type" "$input_json" "$SKILL_DIR" <<'VALIDATE' || exit 1
+import json, sys, os
+
+doc_type, input_json, skill_dir = sys.argv[1], sys.argv[2], sys.argv[3]
+
+with open(input_json, encoding="utf-8") as f:
+    data = json.load(f)
+with open(os.path.join(skill_dir, "template-index.json"), encoding="utf-8") as f:
+    index = json.load(f)
+
+templates = {t["type"]: t for t in index.get("templates", [])}
+aliases = index.get("aliases", {})
+resolved = aliases.get(doc_type, doc_type)
+
+if resolved not in templates:
+    avail = sorted(set(list(templates.keys()) + list(aliases.keys())))
+    print(f"❌ 未知模板类型 '{doc_type}'")
+    print(f"   可用类型：{', '.join(avail)}")
+    sys.exit(1)
+
+errors = []
+tmpl = templates[resolved]
+
+for field in tmpl.get("required", []):
+    if field not in data:
+        errors.append(f"缺少必填字段 \"{field}\"")
+
+def check_section(s, path):
+    if not isinstance(s, dict):
+        errors.append(f"{path} 不是对象"); return
+    if "heading" not in s:
+        errors.append(f"{path} 缺少 \"heading\"（注意不是 \"title\"）")
+    if "level" not in s:
+        errors.append(f"{path} 缺少 \"level\"（必须是 1/2/3）")
+    elif s["level"] not in (1, 2, 3):
+        errors.append(f"{path}.level 必须是 1/2/3，当前：{s['level']}")
+    if "paragraphs" in s and not isinstance(s["paragraphs"], list):
+        errors.append(f"{path}.paragraphs 必须是字符串数组，不是 {type(s['paragraphs']).__name__}")
+    for wrong, right in [("title","heading"),("content","paragraphs"),("text","paragraphs"),("body","paragraphs")]:
+        if wrong in s:
+            errors.append(f"{path} 包含无效字段 \"{wrong}\"（应该用 \"{right}\"）")
+    for i, child in enumerate(s.get("children", [])):
+        check_section(child, f"{path}.children[{i}]")
+
+for i, sec in enumerate(data.get("sections", [])):
+    check_section(sec, f"sections[{i}]")
+
+if resolved == "minutes":
+    for i, item in enumerate(data.get("agenda_items", [])):
+        if isinstance(item, dict):
+            if "topic" not in item: errors.append(f"agenda_items[{i}] 缺少 \"topic\"")
+            if "resolution" not in item: errors.append(f"agenda_items[{i}] 缺少 \"resolution\"")
+
+if errors:
+    print(f"❌ JSON 校验失败（{len(errors)} 个错误）：")
+    for e in errors:
+        print(f"   • {e}")
+    sys.exit(1)
+print(f"✅ JSON 校验通过（类型：{resolved}，字段：{len(data)} 个）")
+VALIDATE
+    fi
+
+    # ---- 确保引擎已编译 ----
+    ENGINE_DIR="$SKILL_DIR/templates"
+    DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" 2>/dev/null | head -1) || true
+    ENGINE_SRC="$ENGINE_DIR/GovDocEngine.cs"
+    ENGINE_PROJ="$ENGINE_DIR/GovDoc.csproj"
+
+    if [ -z "$DLL" ] || [ "$ENGINE_SRC" -nt "$DLL" ] || [ "$ENGINE_PROJ" -nt "$DLL" ]; then
+      echo "--- 编译渲染引擎（检测到首次构建或源码更新） ---"
+      RENDER_DIR=$(mktemp -d)
+      cp "$ENGINE_DIR/GovDoc.csproj" "$RENDER_DIR/"
+      cp "$ENGINE_DIR/GovDocEngine.cs" "$RENDER_DIR/Program.cs"
+      # 预初始化 .NET SDK（首次运行时需要提取 workload、写入 ~/.dotnet 等）
+      # 跳过此步会导致后续 dotnet build 静默失败（exit 1 无输出）
+      dotnet --info > /dev/null 2>&1 || true
+      # restore NuGet 包
+      (cd "$RENDER_DIR" && dotnet restore --verbosity quiet 2>&1) || {
+        echo "⚠️  NuGet restore 失败（可能是离线环境），尝试直接编译..."
+      }
+      # 编译（失败则重试一次，防止 SDK 初始化竞态）
+      (cd "$RENDER_DIR" && dotnet build -c Release --nologo -v q 2>&1) || {
+        echo "⚠️  首次编译失败，重试..."
+        sleep 1
+        (cd "$RENDER_DIR" && dotnet build -c Release --nologo 2>&1) || {
+          echo "❌ 引擎编译失败"
+          rm -rf "$RENDER_DIR"
+          exit 1
+        }
+      }
+      mkdir -p "$ENGINE_DIR/bin"
+      cp -R "$RENDER_DIR/bin/." "$ENGINE_DIR/bin/"
+      rm -rf "$RENDER_DIR"
+      echo "✅ 引擎编译完成"
+    fi
+
+    DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" | head -1) || true
+    if [ -z "$DLL" ]; then
+      echo "❌ 未找到编译产物"; exit 1
+    fi
+
+    echo "--- 渲染 $doc_type ---"
+    DOTNET_ROLL_FORWARD=Major dotnet "$DLL" render "$doc_type" "$input_json" "$output_docx"
+    ;;
+
+  batch)
+    shift
+    if [ $# -lt 3 ]; then
+      echo "❌ 用法：$0 batch <type> <input_dir> <output_dir>"
+      exit 1
+    fi
+    doc_type="$1"; input_dir="$2"; output_dir="$3"
+
+    # 复用 render 的编译逻辑
+    ENGINE_DIR="$SKILL_DIR/templates"
+    DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" 2>/dev/null | head -1) || true
+    if [ -z "$DLL" ]; then
+      echo "--- 首次编译，请稍候 ---"
+      "$0" render notice /dev/null /dev/null 2>/dev/null || true
+      DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" | head -1) || true
+    fi
+
+    echo "--- 批量渲染 $doc_type ---"
+    DOTNET_ROLL_FORWARD=Major dotnet "$DLL" batch "$doc_type" "$input_dir" "$output_dir"
+    ;;
+
+  diff)
+    shift
+    if [ $# -lt 4 ]; then
+      echo "❌ 用法：$0 diff <type> <old.json> <new.json> <output.docx>"
+      exit 1
+    fi
+    doc_type="$1"; old_json="$2"; new_json="$3"; output_docx="$4"
+
+    # 复用 render 的编译逻辑
+    ENGINE_DIR="$SKILL_DIR/templates"
+    DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" 2>/dev/null | head -1) || true
+    if [ -z "$DLL" ]; then
+      echo "--- 首次编译，请稍候 ---"
+      "$0" render notice /dev/null /dev/null 2>/dev/null || true
+      DLL=$(find "$ENGINE_DIR/bin" -name "GovDoc.dll" -path "*/Release/*" | head -1) || true
+    fi
+
+    echo "--- 版本对比 $doc_type ---"
+    DOTNET_ROLL_FORWARD=Major dotnet "$DLL" diff "$doc_type" "$old_json" "$new_json" "$output_docx"
+    ;;
+
+  ofd)
+    shift
+    if [ $# -lt 1 ]; then
+      echo "❌ 用法：$0 ofd <input.docx> [output.ofd]"
+      exit 1
+    fi
+    input_docx="$1"
+    ofd_output="${2:-${input_docx%.docx}.ofd}"
+
+    if [ ! -f "$input_docx" ]; then
+      echo "❌ 输入文件不存在：$input_docx"; exit 1
+    fi
+
+    if ! command -v libreoffice &>/dev/null; then
+      echo "❌ 未找到 libreoffice"
+      echo "   OFD 转换依赖 LibreOffice（信创环境通常预装）"
+      echo "   macOS: brew install --cask libreoffice"
+      exit 1
+    fi
+
+    echo "--- docx → OFD ---"
+    outdir="$(dirname "$ofd_output")"; [ -z "$outdir" ] && outdir="."
+    # LibreOffice 信创版本支持 OFD 导出
+    # 标准版本可能不支持，回退到提示信息
+    libreoffice --headless --convert-to ofd --outdir "$outdir" "$input_docx" 2>&1
+    base_name="$(basename "${input_docx%.docx}")"
+    actual_ofd="$outdir/$base_name.ofd"
+    if [ -f "$actual_ofd" ]; then
+      if [ "$actual_ofd" != "$ofd_output" ]; then mv "$actual_ofd" "$ofd_output"; fi
+      echo "✅ OFD：$ofd_output ($(wc -c < "$ofd_output" | tr -d ' ') bytes)"
+    else
+      echo "⚠️  当前 LibreOffice 版本可能不支持 OFD 导出"
+      echo "   信创环境（如中标麒麟/统信 UOS）的 LibreOffice 通常内置 OFD 支持"
+      echo "   替代方案：使用 WPS Office 或 OfdSharp 库"
+      exit 1
+    fi
+    ;;
+
+  pdf)
+    shift
+    input="${1:-}"
+    output="${2:-}"
+
+    if [ -z "$input" ]; then
+      echo "❌ 用法："
+      echo "   $0 pdf <input.docx> [output.pdf]        已有 docx 转 PDF"
+      echo "   $0 pdf <output.pdf>                     传统模式生成 docx + 转 PDF"
+      exit 1
+    fi
+
+    # 判断：如果第一个参数是已存在的 .docx 文件，直接转 PDF
+    if [ -f "$input" ] && [[ "$input" == *.docx ]]; then
+      docx_input="$input"
+      pdf_output="${output:-${input%.docx}.pdf}"
+    else
+      # 传统模式：先生成 docx 再转 PDF
+      pdf_output="$input"
+      docx_output="${pdf_output%.pdf}.docx"
+      "$0" "$docx_output"
+      docx_input="$docx_output"
+    fi
+
+    echo "--- docx → pdf ---"
+    if ! command -v libreoffice &>/dev/null && ! command -v soffice &>/dev/null; then
+      echo "❌ 未找到 libreoffice / soffice"; exit 1
+    fi
+    LO=$(command -v libreoffice || command -v soffice)
+    outdir="$(dirname "$pdf_output")"; [ -z "$outdir" ] && outdir="."
+    "$LO" --headless --convert-to pdf --outdir "$outdir" "$docx_input" 2>&1
+    # libreoffice 输出文件名基于输入文件名
+    base_name="$(basename "${docx_input%.docx}")"
+    actual_pdf="$outdir/$base_name.pdf"
+    if [ -f "$actual_pdf" ] && [ "$actual_pdf" != "$pdf_output" ]; then
+      mv "$actual_pdf" "$pdf_output"
+    fi
+    if [ -f "$pdf_output" ]; then
+      echo "✅ PDF：$pdf_output ($(wc -c < "$pdf_output" | tr -d ' ') bytes)"
+    else
+      echo "❌ PDF 转换失败"; exit 1
+    fi
+    ;;
+
+  *)
+    # 传统模式：编译 Program.cs
+    output="${1:-output.docx}"
+    if [ ! -f "$WORK_DIR/GovDoc.csproj" ]; then
+      echo "⚠️  自动初始化..."
+      "$0" init
+    fi
+    if [ ! -f "$WORK_DIR/Program.cs" ]; then
+      echo "❌ 未找到 Program.cs"
+      echo "   推荐使用参数化模式：$0 render <type> <input.json> <output.docx>"
+      exit 1
+    fi
+    echo "--- dotnet build ---"
+    if ! dotnet build -c Release --nologo 2>&1; then
+      echo "❌ 编译失败"
+      echo ""
+      echo "=== 编译错误详情 ==="
+      dotnet build -c Release --nologo 2>&1 | grep -E "error CS" | while IFS= read -r line; do
+        file=$(echo "$line" | grep -oE '[^/]+\.cs\([0-9]+,[0-9]+\)')
+        code=$(echo "$line" | grep -oE 'error CS[0-9]+')
+        msg=$(echo "$line" | sed 's/.*error CS[0-9]*: //')
+        echo "  📍 $file  $code"
+        echo "     $msg"
+        echo ""
+      done
+      exit 1
+    fi
+    echo "--- dotnet run ---"
+    dotnet run -c Release --no-build -- "$output"
+    if [ -f "$output" ]; then
+      echo "✅ 生成成功：$output ($(wc -c < "$output" | tr -d ' ') bytes)"
+    else
+      echo "❌ 未找到输出文件：$output"; exit 1
+    fi
+    ;;
+esac

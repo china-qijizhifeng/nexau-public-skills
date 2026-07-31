@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "决议",
+  "description": "沿用决定版式，适用于会议表决形成的决议文本",
+  "type": "object",
+  "properties": {
+    "type": { "const": "deliberation" },
+    "gov_org": { "type": "string" },
+    "doc_num": { "type": "string" },
+    "title": { "type": "string" },
+    "send_to": { "type": "string", "description": "当事人/主送机关" },
+    "date": { "type": "string" },
+    "cc_orgs": { "type": "string" },
+    "case_info": {
+      "type": "object",
+      "description": "案件信息（行政处罚专用，可选）",
+      "properties": {
+        "case_num": { "type": "string", "description": "案件编号" },
+        "party": { "type": "string", "description": "当事人" },
+        "party_id": { "type": "string", "description": "统一社会信用代码/身份证号" },
+        "party_address": { "type": "string", "description": "当事人地址" },
+        "legal_rep": { "type": "string", "description": "法定代表人" }
+      }
+    },
+    "facts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "违法事实 / 事实认定"
+    },
+    "legal_basis": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/policy_ref" },
+      "description": "法律依据"
+    },
+    "penalties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "item": { "type": "string", "description": "处罚项目" },
+          "detail": { "type": "string", "description": "处罚内容" }
+        },
+        "required": ["item", "detail"]
+      },
+      "description": "处罚决定"
+    },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" },
+      "description": "其他正文内容"
+    },
+    "appeal_info": {
+      "type": "object",
+      "description": "救济途径告知",
+      "properties": {
+        "reconsider_org": { "type": "string", "description": "行政复议机关" },
+        "reconsider_days": { "type": "integer", "default": 60 },
+        "lawsuit_court": { "type": "string", "description": "诉讼法院" },
+        "lawsuit_days": { "type": "integer", "default": 6 }
+      }
+    },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "gov_org", "doc_num", "title", "date"]
+}

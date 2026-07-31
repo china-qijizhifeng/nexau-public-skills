@@ -1,0 +1,41 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "纪要（会议纪要）",
+  "description": "记载会议主要情况和议定事项。版头用 〔 〕 号，无主送机关",
+  "type": "object",
+  "properties": {
+    "type": { "const": "minutes" },
+    "gov_org": { "type": "string", "description": "召集机关" },
+    "doc_num": { "type": "string", "description": "纪要编号，如 沪民纪〔2025〕3号" },
+    "title": { "type": "string", "description": "纪要标题" },
+    "meeting_info": {
+      "type": "object",
+      "properties": {
+        "time": { "type": "string", "description": "会议时间" },
+        "location": { "type": "string", "description": "会议地点" },
+        "host": { "type": "string", "description": "主持人" },
+        "attendees": { "type": "array", "items": { "type": "string" }, "description": "出席人员" },
+        "recorder": { "type": "string", "description": "记录人" }
+      },
+      "required": ["time", "location", "host", "attendees"]
+    },
+    "agenda_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "topic": { "type": "string", "description": "议题" },
+          "discussion": { "type": "string", "description": "讨论要点" },
+          "resolution": { "type": "string", "description": "议定事项" },
+          "responsible": { "type": "string", "description": "责任人/部门" },
+          "deadline": { "type": "string", "description": "完成时限" }
+        },
+        "required": ["topic", "resolution"]
+      }
+    },
+    "date": { "type": "string" },
+    "cc_orgs": { "type": "string", "description": "印发范围" },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "gov_org", "doc_num", "title", "meeting_info", "agenda_items", "date"]
+}

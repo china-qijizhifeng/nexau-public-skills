@@ -1,0 +1,8 @@
+[project]
+name = "sqlite-mcp"
+version = "0.1.0"
+description = "Cookbook-grade SQLite MCP server (DM8 alternative, zero external deps)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp[cli]>=1.27.1",
+]

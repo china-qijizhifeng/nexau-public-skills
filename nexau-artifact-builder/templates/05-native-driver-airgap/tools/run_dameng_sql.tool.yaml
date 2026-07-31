@@ -1,0 +1,35 @@
+type: tool
+name: run_dameng_sql
+description: >-
+  Execute a read-only SQL query against a Dameng database and return rows as JSON.
+
+  Rules:
+    - Only SELECT and WITH queries are allowed.
+    - Do not run INSERT, UPDATE, DELETE, DDL, CALL, COMMIT, or ROLLBACK.
+    - Always add WHERE/LIMIT-like filters when possible.
+    - The database connection string is injected by runtime configuration and is not visible to the model.
+input_schema:
+  type: object
+  properties:
+    sql:
+      type: string
+      description: Read-only Dameng SQL query. Only SELECT or WITH is accepted.
+    max_rows:
+      type: integer
+      default: 20
+      minimum: 1
+      maximum: 1000
+      description: Maximum number of rows to return. Defaults to 20.
+    timeout:
+      type: integer
+      default: 30
+      minimum: 1
+      maximum: 300
+      description: Driver execution timeout in seconds. Defaults to 30.
+  required:
+    - sql
+  # ⚠️ 这里不能写 additionalProperties: false。
+  # agent.yaml 用 extra_kwargs 注入了 db_conn_str，框架会先把 extra_kwargs 合进
+  # 参数再做 jsonschema 校验（只剔除 agent_state/global_storage/sandbox/ctx），
+  # 加了就必报 "Additional properties are not allowed ('db_conn_str' was unexpected)"。
+  $schema: http://json-schema.org/draft-07/schema#

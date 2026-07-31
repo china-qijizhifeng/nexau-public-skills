@@ -1,0 +1,44 @@
+type: tool
+name: execute_sql
+description: >-
+  执行 SQL 查询并返回结果。
+
+  使用说明:
+    - 仅支持 SELECT 查询，禁止执行 DROP、DELETE、UPDATE、INSERT 等危险操作
+    - 查询结果默认最多返回 10 行，可通过 max_rows 参数调整（上限 1000 行，超过按 1000 处理）
+    - 查询默认超时时间为 30 秒（上限 300 秒）
+    - 结果被截断时 total_rows 返回 ">=N" 形式；需要精确总数请另跑 COUNT(*)
+    - 返回结果包含列名和数据行
+
+  最佳实践:
+    - 始终使用 LIMIT 限制返回行数
+    - 对于大表查询，先使用 COUNT(*) 估计数据量
+    - 使用 WHERE 条件过滤数据，避免全表扫描
+    - 该数据库为 SQLite，使用 SQLite 方言
+    - 使用 credit_code 在 enterprise_* 表之间做 JOIN
+
+input_schema:
+  type: object
+  properties:
+    sql:
+      type: string
+      description: 要执行的 SQL 查询语句（仅支持 SELECT）
+    timeout:
+      type: integer
+      default: 30
+      minimum: 1
+      maximum: 300
+      description: 查询超时时间（秒），默认 30 秒，最大 300 秒
+    max_rows:
+      type: integer
+      default: 10
+      minimum: 1
+      maximum: 1000
+      description: 最大返回行数，默认 10 行，最大 1000 行
+  required:
+    - sql
+  # ⚠️ 本工具在 agent.yaml 里配了 extra_kwargs(db_path)，这里【禁止】写
+  # additionalProperties: false —— extra_kwargs 会被并进 jsonschema 校验参数，
+  # 写了每次调用必抛 ValueError: Additional properties are not allowed ('db_path' was unexpected)。
+  # 也不要把 db_path 补进 properties（那样模型就能看见并覆盖它）。
+  $schema: http://json-schema.org/draft-07/schema#

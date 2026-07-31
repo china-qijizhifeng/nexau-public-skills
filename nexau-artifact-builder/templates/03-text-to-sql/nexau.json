@@ -1,0 +1,6 @@
+{
+  "agents": {
+    "enterprise_data_agent": "agent.yaml"
+  },
+  "excluded": [".nexau/", ".env", "__pycache__/"]
+}

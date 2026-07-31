@@ -1,0 +1,9 @@
+[project]
+name = "dm8-mcp"
+version = "0.1.0"
+description = "DM8 MCP server (cookbook edition)"
+requires-python = ">=3.12"
+dependencies = [
+    "mcp[cli]>=1.27.1",
+    "dmpython>=2.5.32",
+]

@@ -1,0 +1,6 @@
+{
+  "agents": {
+    "govdoc_writer": "agent.yaml"
+  },
+  "excluded": [".nexau/", ".env", "__pycache__/", "start.py"]
+}

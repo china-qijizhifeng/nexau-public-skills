@@ -1,0 +1,45 @@
+type: agent
+name: enterprise_data_agent
+description: 企业数据问答 Agent — 基于企业 SQLite 数据库的自然语言查询。
+
+system_prompt: ./systemprompt.md
+# 平台静态校验要求钉死 jinja；本 systemprompt.md 里没有 {{ }} / {% %}，不会被模板引擎吃掉。
+system_prompt_type: jinja
+max_iterations: 300
+tool_call_mode: structured
+
+# NAC 上只需写 model + 业务采样参数：base_url / api_key / api_type / stream
+# 都会被平台在运行期无条件覆盖，写了是噪声。
+# ⚠️ 脱离 NAC、用裸 NexAU 在本地跑这个制品时，需要自行补回 base_url / api_key。
+llm_config:
+  model: ${env.LLM_MODEL}
+  temperature: 0.2
+
+tools:
+  - name: execute_sql
+    yaml_path: ./tools/execute_sql.tool.yaml
+    binding: custom_tools.execute_sql:execute_sql
+    extra_kwargs:
+      # 制品在 runtime 里被解包到 /agent（AGENT_PROJECT_DIR 默认值），
+      # 所以「制品根目录下的 xxx.sqlite」= /agent/xxx.sqlite。
+      # 换成你自己的库文件名；本模板未随包附带示例库，见 TEMPLATE.md「复制后必须改的地方」。
+      db_path: /agent/enterprise.sqlite
+  - name: read_file
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: run_shell_command
+    yaml_path: ./tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+# 本模板不挂中间件；键必须存在且为 list（平台静态校验强制）。
+# 要加长上下文压缩，参考 01-agentic-rag 的 ContextCompactionMiddleware 写法。
+middlewares: []
+
+skills:
+  - ./skills/enterprise_basic
+  - ./skills/enterprise_contact
+  - ./skills/enterprise_financing
+  - ./skills/enterprise_product
+  - ./skills/industry
+  - ./skills/industry_enterprise
+  - ./skills/users

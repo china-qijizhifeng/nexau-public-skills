@@ -1,0 +1,22 @@
+type: agent
+name: dameng_sql_agent
+description: Dameng SQL read-only query agent.
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+tool_call_mode: structured
+# NAC 上 base_url / api_key / api_type / stream 由平台无条件覆盖，写了也不生效，
+# 因此这里只保留 model + 业务采样参数。
+# 若脱离 NAC、在本地裸跑 NexAU，需要自行补 base_url / api_key（api_type 默认 openai_chat_completion）。
+llm_config:
+  model: ${env.LLM_MODEL}
+  max_tokens: 4096
+  temperature: 0.2
+tools:
+  - name: run_dameng_sql
+    yaml_path: ./tools/run_dameng_sql.tool.yaml
+    binding: custom_tools.dameng_sql:run_dameng_sql
+    extra_kwargs:
+      db_conn_str: ${env.DAMENG_DB_CONN_STR}
+# 本模板不挂 skill、不加中间件，但两个字段必须显式写成空列表（静态校验要求 list 类型）。
+skills: []
+middlewares: []

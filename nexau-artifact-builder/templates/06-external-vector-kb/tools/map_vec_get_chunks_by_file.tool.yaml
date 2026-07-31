@@ -1,0 +1,84 @@
+type: tool
+name: map_vec_get_chunks_by_file
+description: >-
+  Drill into a SINGLE source file inside a vector KB and return more
+  chunks of it. Use this AFTER a normal search returned a hit you want
+  to expand (e.g. you got chunk for article 143 of a code; now you want
+  articles 144, 145, ... from the same file).
+
+  How it works (and why this exists): MAP's vector KB exposes no
+  "list-all-chunks-by-file" endpoint and no server-side `file_id` filter
+  on search. We approximate by running a wide hybrid_search with a large
+  top_k and client-filtering hits whose `metadata.file_id` matches your
+  request (or whose `metadata.source` contains your substring). Pass the
+  same `knowledge_base_id` the original hit came from — chunks are
+  scoped per vector KB.
+
+  When to use:
+    - User wants more passages from the same document found in search.
+    - You got an excerpt and need surrounding clauses for a complete
+      answer.
+    - You want to enumerate chunks under a specific source file.
+  When NOT to use:
+    - Initial discovery/search — use map_vec_batch_search instead.
+    - Cross-file queries (you want hits from MANY files, not all from
+      one) — use map_vec_batch_search.
+
+  Tips:
+    - `query` is a relevance bias INSIDE the file. Use a focused noun
+      from the user's question. If you really want unbiased coverage,
+      omit it (a generic "内容" is used) — but coverage is then
+      whatever the server's ranker gives back among `top_k * over_fetch`
+      candidates.
+    - If `matched < max_chunks`, increase `over_fetch` (default 5) to
+      cast a wider net before client-filtering.
+    - Output ordering: by `segment_position` when present, otherwise by
+      score-desc.
+input_schema:
+  type: object
+  properties:
+    file_id:
+      type: string
+      description: >-
+        Preferred targeting. Take from a previous search hit's
+        `file_id` field.
+    source_contains:
+      type: string
+      description: >-
+        Alternative targeting — substring match against the chunk's
+        `metadata.source` (typically the file path). Use when file_id
+        isn't reliable, e.g. just say "民法典".
+    query:
+      type: string
+      description: >-
+        Optional relevance bias INSIDE the file. Defaults to a generic
+        "内容" so the server returns *some* ordering.
+    knowledge_base_id:
+      type: string
+      description: >-
+        Vector KB id — must match the KB the original hit came from.
+        Falls back to MAP_VECTOR_KB_ID env if omitted.
+    max_chunks:
+      type: integer
+      description: "Cap on returned matched chunks (default 20)."
+      minimum: 1
+      maximum: 50
+    over_fetch:
+      type: integer
+      description: >-
+        Server top_k = max_chunks × over_fetch (capped at 50). Increase
+        if too few chunks match your target (default 5).
+      minimum: 1
+      maximum: 20
+    score_threshold:
+      type: number
+      description: "Optional. Drop hits below this score before client filter."
+    weights:
+      type: array
+      items:
+        type: number
+      description: "Optional. [bm25, vector] weights, default [0.5, 0.5]."
+      minItems: 2
+      maxItems: 2
+  # ⚠️ 不能加 `additionalProperties: false`（本工具用 extra_kwargs 注入鉴权三要素）。
+  $schema: http://json-schema.org/draft-07/schema#

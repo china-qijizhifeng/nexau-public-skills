@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "请示/批复",
+  "description": "请示：向上级请求指示批准。批复：答复下级请示。共用同一版式（红头文件变体）",
+  "type": "object",
+  "properties": {
+    "type": { "const": "resolution" },
+    "subtype": { "type": "string", "enum": ["请示", "批复"], "description": "请示或批复" },
+    "gov_org": { "type": "string" },
+    "doc_num": { "type": "string" },
+    "title": { "type": "string" },
+    "send_to": { "type": "string", "description": "请示→上级机关，批复→下级机关" },
+    "date": { "type": "string" },
+    "cc_orgs": { "type": "string" },
+    "urgency": { "type": "string", "enum": ["普通", "加急", "特急"], "default": "普通" },
+    "ref_doc": { "type": "string", "description": "批复时引用的请示文号（批复专用）" },
+    "sections": {
+      "type": "array",
+      "items": { "$ref": "../base.json#/definitions/section" }
+    },
+    "conclusion": {
+      "type": "string",
+      "description": "结尾语。请示：'以上请示，请批复'；批复：'此复' 等"
+    },
+    "seal": { "$ref": "../base.json#/definitions/seal_placeholder" }
+  },
+  "required": ["type", "subtype", "gov_org", "doc_num", "title", "send_to", "date", "sections"]
+}

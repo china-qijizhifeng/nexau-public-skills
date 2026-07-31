@@ -1,0 +1,37 @@
+type: agent
+name: labor_law_qa
+description: 劳动法智能问答机器人，基于中国劳动法律法规为用户提供专业的法律咨询服务
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+
+# NAC 推荐最小写法：只写 model + 业务采样参数。
+# base_url / api_key / api_type / stream 在 NAC 上会被平台无条件覆盖，写了也不生效。
+# ⚠️ 本地裸跑 NexAU（不经 NAC）时需自行提供 base_url / api_key：
+#    要么在本段补上，要么设置 LLM_BASE_URL / LLM_API_KEY 环境变量。
+llm_config:
+  model: ${env.LLM_MODEL}
+  max_tokens: 8192
+  temperature: 0.2
+
+tools:
+  - name: read_file
+    yaml_path: tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: search_file_content
+    yaml_path: tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  - name: run_shell_command
+    yaml_path: tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+skills:
+  - ./skills/labor-lawyer-cn
+
+max_iterations: 50
+max_context_tokens: 128000
+tool_call_mode: structured
+
+middlewares:
+  - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
+    params:
+      threshold: 0.6

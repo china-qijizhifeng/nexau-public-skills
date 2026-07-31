@@ -1,0 +1,50 @@
+type: agent
+name: house_fund_review
+max_context_tokens: 200000
+system_prompt: ./systemprompt.md
+system_prompt_type: jinja
+tool_call_mode: structured
+max_iterations: 300
+
+# NAC 上只需要写 model + 业务采样参数：
+#   连接四件套（base_url / api_key / api_type / stream）由平台在运行时统一注入并覆盖，
+#   写在这里不生效，只会变成噪声。
+# 如果要脱离 NAC 在本地裸跑 NexAU，请自行补上 base_url 和 api_key 两个字段。
+llm_config:
+  model: ${env.LLM_MODEL}
+  max_tokens: 32000
+  # 合规审核要精确引用条款、禁止发挥，故取低温（cookbook 原版是 1，本模板已调低）。
+  # ⚠️ 若你的模型卡默认开了 anthropic 的 thinking，上游会要求 temperature=1 ——
+  #    那种情况下要么改回 1，要么整行删掉（让它保持 None）。
+  temperature: 0.2
+
+tools:
+  # File operations
+  - name: read_file
+    yaml_path: ./tools/read_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:read_file
+  - name: write_file
+    yaml_path: ./tools/write_file.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:write_file
+  - name: replace
+    yaml_path: ./tools/replace.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:replace
+  # Search and navigation
+  - name: search_file_content
+    yaml_path: ./tools/search_file_content.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:search_file_content
+  - name: list_directory
+    yaml_path: ./tools/list_directory.tool.yaml
+    binding: nexau.archs.tool.builtin.file_tools:list_directory
+  # Shell
+  - name: run_shell_command
+    yaml_path: ./tools/run_shell_command.tool.yaml
+    binding: nexau.archs.tool.builtin.shell_tools:run_shell_command
+
+
+skills:
+  - ./skills/house-fund-review
+  - ./skills/pdf_to_md
+
+# 本模板不挂中间件；键必须显式存在（平台静态校验器要求 middlewares 是列表）。
+middlewares: []

@@ -1,0 +1,17 @@
+type: tool
+name: finnhub_basic_financials
+description: >-
+  Get key financial metrics including P/E ratio, P/B ratio, dividend yield,
+  52-week high/low, market cap, beta, EPS, ROE, and many more fundamental
+  indicators.
+# ⚠️ 本工具在 agent.yaml 里带 extra_kwargs（api_token），input_schema 切勿加 additionalProperties: false：
+# extra_kwargs 会被 merge 进参数后参与 jsonschema 校验，加了必报 "Additional properties are not allowed ('api_token' was unexpected)"。
+input_schema:
+  type: object
+  properties:
+    symbol:
+      type: string
+      description: Stock ticker symbol (e.g. 'AAPL', 'MSFT').
+  required:
+    - symbol
+  $schema: http://json-schema.org/draft-07/schema#

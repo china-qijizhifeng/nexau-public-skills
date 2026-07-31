@@ -1,0 +1,5 @@
+{
+  "agents": {
+    "labor_law_qa": "agent.yaml"
+  }
+}

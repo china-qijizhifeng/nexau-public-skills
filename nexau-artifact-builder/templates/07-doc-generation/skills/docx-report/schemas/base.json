@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "govdoc-base",
+  "description": "公文基础字段（所有类型共享）",
+  "type": "object",
+  "definitions": {
+    "policy_ref": {
+      "type": "object",
+      "properties": {
+        "doc_num": { "type": "string", "description": "政策文号，如 沪民规〔2019〕7号" },
+        "name": { "type": "string", "description": "政策名称" },
+        "clause": { "type": "string", "description": "引用条款，如 第十二条" },
+        "url": { "type": "string", "format": "uri", "description": "原文链接（可选）" }
+      },
+      "required": ["doc_num", "name"]
+    },
+    "section": {
+      "type": "object",
+      "properties": {
+        "heading": { "type": "string", "description": "标题文字，如 一、总体要求" },
+        "level": { "type": "integer", "enum": [1, 2, 3], "description": "标题级别：1=黑体 2=楷体 3=仿宋加粗" },
+        "paragraphs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "该节下的正文段落"
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/section" },
+          "description": "子节（递归）"
+        }
+      },
+      "required": ["heading", "level"]
+    },
+    "table_row": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "表格行，每个元素是一个单元格"
+    },
+    "kv_table": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "description": "表格标题（可选）" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": { "type": "string" },
+              "value": { "type": "string" }
+            },
+            "required": ["key", "value"]
+          }
+        }
+      },
+      "required": ["items"]
+    },
+    "data_table": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "headers": { "type": "array", "items": { "type": "string" } },
+        "rows": { "type": "array", "items": { "$ref": "#/definitions/table_row" } }
+      },
+      "required": ["headers", "rows"]
+    },
+    "seal_placeholder": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean", "default": true },
+        "text": { "type": "string", "default": "（此处加盖公章）" },
+        "position": { "type": "string", "enum": ["signature", "page_joint"], "default": "signature" }
+      }
+    }
+  }
+}

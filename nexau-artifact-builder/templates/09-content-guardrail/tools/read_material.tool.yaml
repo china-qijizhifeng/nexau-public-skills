@@ -1,0 +1,20 @@
+type: tool
+name: read_material
+description: >-
+  读取本单位待处理材料（市民来信、网上留言等）的全文。材料随制品一起分发，
+  存放在制品的 materials/ 目录下。传入文件名即可，文件不存在时会返回当前可读材料清单。
+  内容过长时会被截断并在末尾标注。只能读文本材料，不能读取该目录以外的任何路径。
+input_schema:
+  type: object
+  properties:
+    file_name:
+      type: string
+      description: >-
+        materials/ 目录下的文件名，例如 "网民留言-20260601.txt"。
+        只写文件名，不要带目录前缀，也不要写绝对路径。
+  required:
+    - file_name
+  # 本工具没有 extra_kwargs，所以 additionalProperties: false 可以保留。
+  # 一旦在 agent.yaml 里给它加了 extra_kwargs（注密钥），必须删掉这一行，否则每次调用都报
+  # "Additional properties are not allowed"。
+  additionalProperties: false

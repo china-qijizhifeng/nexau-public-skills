@@ -1,0 +1,98 @@
+{
+  "version": "1.0",
+  "default_template": "generic",
+  "selection_rule": [
+    "if needs_govdoc_format => govdoc family",
+    "else => generic",
+    "if uncertain => generic"
+  ],
+  "templates": [
+    {
+      "type": "generic",
+      "family": "general",
+      "schema": "schemas/general/generic.json",
+      "test_input": "test/inputs/test-generic.json",
+      "required": ["title", "sections"],
+      "scenarios": ["业务报告", "技术方案", "产品说明", "培训材料"]
+    },
+    {
+      "type": "notice",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/notice.json",
+      "test_input": "test/inputs/test-notice.json",
+      "required": ["gov_org", "doc_num", "title", "send_to", "date", "sections"],
+      "scenarios": ["通知", "通报", "公告", "通告"]
+    },
+    {
+      "type": "report",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/report.json",
+      "test_input": "test/inputs/test-report.json",
+      "required": ["title", "org", "date", "sections"],
+      "scenarios": ["内部报告", "评估报告", "审计报告", "公报", "议案"]
+    },
+    {
+      "type": "letter",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/letter.json",
+      "test_input": "test/inputs/test-letter.json",
+      "required": ["gov_org", "doc_num", "title", "send_to", "date", "sections"],
+      "scenarios": ["函件", "协查函", "答复函"]
+    },
+    {
+      "type": "resolution",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/resolution.json",
+      "test_input": "test/inputs/test-resolution.json",
+      "required": ["subtype", "gov_org", "doc_num", "title", "send_to", "date", "sections"],
+      "scenarios": ["请示", "批复"]
+    },
+    {
+      "type": "minutes",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/minutes.json",
+      "test_input": "test/inputs/test-minutes.json",
+      "required": ["gov_org", "doc_num", "title", "meeting_info", "agenda_items", "date"],
+      "scenarios": ["会议纪要"]
+    },
+    {
+      "type": "decision",
+      "family": "govdoc",
+      "schema": "schemas/govdoc/decision.json",
+      "test_input": "test/inputs/test-decision.json",
+      "required": ["gov_org", "doc_num", "title", "date"],
+      "scenarios": ["行政决定", "命令", "决议"]
+    }
+  ],
+  "aliases": {
+    "opinion": "notice",
+    "bulletin": "notice",
+    "announcement": "notice",
+    "circular": "notice",
+    "communique": "report",
+    "proposal": "report",
+    "order": "decision",
+    "deliberation": "decision",
+    "通知": "notice",
+    "意见": "notice",
+    "公告": "notice",
+    "通报": "notice",
+    "通告": "notice",
+    "报告": "report",
+    "公报": "report",
+    "议案": "report",
+    "函": "letter",
+    "请示": "resolution",
+    "批复": "resolution",
+    "纪要": "minutes",
+    "决定": "decision",
+    "命令": "decision",
+    "令": "decision",
+    "决议": "decision",
+    "通用": "generic",
+    "通用文档": "generic",
+    "普通文档": "generic",
+    "general": "generic",
+    "common": "generic"
+  }
+}
