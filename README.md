@@ -1,4 +1,4 @@
-# north-public-skills
+# nexau-public-skills
 
 面向 **North Agent Cloud（NAC）/ NexAU** 平台使用者的公开 skill 集合。
 
@@ -17,22 +17,22 @@
 ### 作为 git submodule（推荐给需要固定版本的模块）
 
 ```bash
-git submodule add https://github.com/china-qijizhifeng/north-public-skills.git path/to/skills
+git submodule add https://github.com/china-qijizhifeng/nexau-public-skills.git path/to/skills
 git submodule update --init --recursive
 ```
 
 ### 直接 clone
 
 ```bash
-git clone --depth 1 https://github.com/china-qijizhifeng/north-public-skills.git
+git clone --depth 1 https://github.com/china-qijizhifeng/nexau-public-skills.git
 ```
 
 ### 只取其中一个 skill（sparse checkout）
 
 ```bash
 git clone --depth 1 --filter=blob:none --sparse \
-  https://github.com/china-qijizhifeng/north-public-skills.git
-cd north-public-skills
+  https://github.com/china-qijizhifeng/nexau-public-skills.git
+cd nexau-public-skills
 git sparse-checkout set nexau-artifact-builder
 ```
 
