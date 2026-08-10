@@ -136,7 +136,7 @@ K8s 后端建普通沙箱 Pod 时**根本不读**用户 env —— 只有 DevBox
 
 ## 5. 制品内声明：`runtime.env` / `sandbox.env` 文件
 
-制品**根目录**可以放两个 dotenv 风格文件，deploy / redeploy / promote 时被平台读出来，作为**最高优先级 overlay** 叠加到项目级 + 环境级 env 之上，写进版本的 env 快照。
+制品**根目录**可以放两个 dotenv 风格文件，deploy / redeploy 时被平台读出来，作为**最高优先级 overlay** 叠加到项目级 + 环境级 env 之上，写进版本的 env 快照。
 
 | 文件 | 落到哪个 scope |
 |---|---|
