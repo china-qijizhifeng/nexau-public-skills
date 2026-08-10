@@ -11,6 +11,7 @@
 | skill | 做什么 | 什么时候用 |
 |---|---|---|
 | [`nexau-artifact-builder`](nexau-artifact-builder/) | NAC / NexAU Agent 制品（Artifact）开发指南：制品结构与打包硬约束、`agent.yaml` 完整契约与校验强度、内置工具与自定义工具、Skill 设计与 Agentic Search、MCP 与子代理、中间件与内容安全护栏、环境变量与密钥注入、运行时路径边界、错误速查，以及 10 个可直接复制改造的实战模板 | 创建 Agent、写 `nexau.json` / `agent.yaml` / `tool.yaml`、开发自定义工具、打包上传制品、或制品行为不符合预期时 |
+| [`nexau-deploy-and-debug`](nexau-deploy-and-debug/) | 把制品部署到 NAC 平台并在出问题时定位原因：两种凭据的边界与自检、PAT 权限矩阵（什么需要管理员）、部署与版本命令全表、发布与回滚节奏、受保护环境、六步排障次序与 28 条症状索引、错误码与 message 速查、平台限制的精确数值与自测方法、会骗人的「假绿」判据清单 | 部署上线、配环境变量与密钥、回滚、查日志与 trace、收到 4xx/5xx 不知道什么意思、或怀疑某个「成功」是假的 |
 
 ## 怎么引用
 
@@ -33,7 +34,7 @@ git clone --depth 1 https://github.com/china-qijizhifeng/nexau-public-skills.git
 git clone --depth 1 --filter=blob:none --sparse \
   https://github.com/china-qijizhifeng/nexau-public-skills.git
 cd nexau-public-skills
-git sparse-checkout set nexau-artifact-builder
+git sparse-checkout set nexau-artifact-builder nexau-deploy-and-debug
 ```
 
 ### 给 AI agent 使用
@@ -42,7 +43,8 @@ git sparse-checkout set nexau-artifact-builder
 或项目内 `.claude/skills/`）：
 
 ```bash
-ln -s "$PWD/nexau-artifact-builder" ~/.claude/skills/nexau-artifact-builder
+ln -s "$PWD/nexau-artifact-builder"  ~/.claude/skills/nexau-artifact-builder
+ln -s "$PWD/nexau-deploy-and-debug" ~/.claude/skills/nexau-deploy-and-debug
 ```
 
 ## 约定
