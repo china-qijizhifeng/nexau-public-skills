@@ -14,7 +14,7 @@
 #  ⚠️ 换别的业务时按注释【按需删减】——不用的工具/中间件/MCP 直接删，
 #     工具越少，模型选错概率越低、上下文越省。
 #
-#  所有 binding 路径均已对 nexau-py 源码核实。
+#  所有 binding 路径均已实测可加载。
 #
 #  ⚠️ 关于 ${env.变量名}：NexAU 在 yaml.safe_load 之前对【整个文件文本】做正则替换——
 #     连注释里的这种写法也会被解析，变量没设就直接加载失败（不支持默认值/转义）。
@@ -53,12 +53,11 @@ stop_tools:                        # 调用到这些工具即结束本轮，其�
   - ask_user                       # ★ 挂了 ask_user 就必须登记进来，否则提完问不停、继续瞎跑
 max_iterations: 300                # 单次任务最多迭代轮数（默认 100）
 max_context_tokens: 200000         # 上下文上限（默认 128000）
-max_running_subagents: 5           # 默认 5。⚠️ 目前是【空旋钮】：executor.py:291 只把它存成属性，
-                                   #   全仓库没有任何地方消费它做限流，设了不改变并发。
+max_running_subagents: 5           # 默认 5。⚠️ 目前是【空旋钮】：框架只把它存成属性，
+                                   #   没有任何地方消费它做限流，设了不改变并发。
                                    #   要控子代理并发只能靠 systemprompt 里的调度规则。
-timeout: 300                       # ⚠️ 也是【空旋钮】：它流进 ExecutionConfig 但 Executor 构造时
-                                   #   根本没接（agent.py:754-777 的参数列表里没有 timeout，
-                                   #   Executor.__init__ 也无该形参）。真正生效的超时是
+timeout: 300                       # ⚠️ 也是【空旋钮】：它虽然进了执行配置，但执行器构造时
+                                   #   压根没有这个形参，没有任何地方读它。真正生效的超时是
                                    #   llm_config.timeout（每次 LLM 请求级）。
 retry_attempts: 5                  # LLM 调用失败重试次数（默认 5）
 retry_backoff_max_seconds: 30      # 重试最大退避秒数（默认 30）
@@ -163,10 +162,10 @@ mcp_servers:
 # ===========================================================================
 #  中间件（middlewares）：挂在执行前后的拦截器
 #  ----------------------------------------------------------------------------
-#  下面每条的 import 路径与参数名均已对 nexau-py 源码核实。不需要的整段删掉即可。
-#  ⚠️ 执行顺序【不是】一律按声明顺序（hooks.py）：
+#  下面每条的 import 路径与参数名均已实测可加载。不需要的整段删掉即可。
+#  ⚠️ 执行顺序【不是】一律按声明顺序：
 #     · before_agent / before_model / before_tool / stream_chunk —— 正向，按声明顺序
-#     · after_agent / after_model / after_tool —— 【倒序】（`for m in reversed(self.middlewares)`）
+#     · after_agent / after_model / after_tool —— 【倒序】（最后声明的先执行）
 #     · wrap_model_call / wrap_tool_call —— 洋葱嵌套，index 0 在最外层
 #     本模板恰好看不出差别：唯一有两个参与者的阶段是 before_model（①和③都实现了它），
 #     而它正好是正向的；倒序/洋葱那几个阶段各只有一个参与者（②只有 after_tool、
@@ -175,7 +174,7 @@ mcp_servers:
 # ===========================================================================
 middlewares:
   # ① ContextCompactionMiddleware —— 多轮长对话时自动压缩历史（推荐常开）
-  #    full 参数见源码 context_compaction/config.py 的 CompactionConfig
+  #    完整参数表见 ../../references/middlewares.md §3.1
   - import: nexau.archs.main_sub.execution.middleware.context_compaction:ContextCompactionMiddleware
     params:
       threshold: 0.6                 # 上下文用量超此比例触发压缩（默认 0.75；注意是 threshold 不是 threshold_ratio）
@@ -206,10 +205,10 @@ middlewares:
 
   # ④ RuntimeEnvironmentMiddleware —— 把【稳定的】运行时事实追加到首条 system 消息：
   #    工作目录 / 操作系统 / shell 后端，仅此三项。
-  #    ⚠️ 它【刻意不注入】日期、用户名、任意环境变量（runtime_environment.py:41-46 的 docstring
-  #       原话：更易变的值应留在显式的用户模板里）。要日期就在 systemprompt 里写 `{{ date }}`
-  #       ——那是框架运行时事实层提供的 Jinja 变量（runtime_context.py:110-134），与本中间件无关。
-  #    ⚠️ 三个值全空时静默不注入（_render_environment: `if not any(values.values()): return ""`）。
+  #    ⚠️ 它【刻意不注入】日期、用户名、任意环境变量（该中间件自己的文档写明：更易变的值
+  #       应留在显式的用户模板里）。要日期就在 systemprompt 里写 `{{ date }}`
+  #       ——那是框架运行时事实层提供的 Jinja 变量，与本中间件无关。
+  #    ⚠️ 三个值全空时静默不注入（渲染成空串，不追加任何内容）。
   - import: nexau.archs.main_sub.execution.middleware.runtime_environment:RuntimeEnvironmentMiddleware
     params: {}                     # 全用默认；params 键本身必填（缺键平台静态校验器报 middlewares.entry.missing_key）
     #   template: "..."              # 可选：自定义注入模板（默认 DEFAULT_RUNTIME_ENVIRONMENT_TEMPLATE）

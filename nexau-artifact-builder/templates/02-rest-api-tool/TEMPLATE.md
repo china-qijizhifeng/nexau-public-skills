@@ -130,7 +130,7 @@ cookbook 原教程让你把 `X_FINNHUB_SECRET` 配到「运行配置 → 沙箱�
 
 7. **返回体积要实测**。工具返回值最终 100% 进模型上下文；上线前用真实调用测一次单次返回 token 数，过大就在函数里再加一层摘要。
 
-8. ✅ **本模板已通过 A4A 静态校验器**（`builtin-agents/Agent4Agent/skills/artifact-verifier` 实测 `pass: true`、0 error、0 warning）。
+8. ✅ **本模板已通过平台的制品静态校验器**（实测 `pass: true`、0 error、0 warning）。
    曾经卡住的两条已修（改法见下方改动表）：
 
    | error code | 曾经的现状 | 现在的写法 |
@@ -138,7 +138,7 @@ cookbook 原教程让你把 `X_FINNHUB_SECRET` 配到「运行配置 → 沙箱�
    | `agent.system_prompt.required_pattern_missing` | `systemprompt.md` 没写「skills 根目录位于 `/home/user/.skills/`」 | 校验器**无条件**要这句，哪怕一个 skill 都没挂 → 已在 `# 运行时路径约定` 一节写入，并说明「以 `LoadSkill` 返回的 `SkillFolder` 为权威路径」 |
    | `skills.invalid_type` | `agent.yaml` 没有 `skills` 键 | 已补 `skills: []`。⚠️ 必须写显式 `[]`，只写 `skills:` 加一行注释会被 YAML 解析成 `null`，照样报 `skills.invalid_type` |
 
-   两条都**不影响运行**（框架允许无 skills、systemprompt 内容自由），但你自己改造本模板时别把它们删回去——A4A 流水线会拦。
+   两条都**不影响运行**（框架允许无 skills、systemprompt 内容自由），但你自己改造本模板时别把它们删回去——平台校验流水线会拦。
 
 ## 本模板相对 cookbook 原版的改动
 
@@ -153,8 +153,8 @@ cookbook 原教程让你把 `X_FINNHUB_SECRET` 配到「运行配置 → 沙箱�
 | `custom_tools/finnhub_api.py` | 只改模块 docstring：`${env.X-Finnhub-Secret}` → `X_FINNHUB_SECRET`；删掉「Only stdlib modules are used so the code runs inside a NexAU sandbox」；补「custom_tools 跑在 agent-runtime 进程内 / runtime 镜像已带 httpx、requests / 只有 5 个函数被注册」 | ① 原变量名写错，与 agent.yaml 不一致；② **「沙箱只有 Python 标准库」已过时**：custom_tools 根本不在沙箱里跑，且 agent-runtime 镜像自带 httpx/requests、沙箱也预装了 `/opt/sandbox-python` venv（requests/httpx/pandas/PyMuPDF/playwright 等）。函数体沿用 urllib 无害，故未动代码 |
 | `nexau.json` | **未改**（逐字保留） | `excluded` 平台不解析，但作为打包端约定无害；`start.py` 是原样例遗留 |
 | `tools/read_file`、`search_file_content`、`run_shell_command`.tool.yaml | **未改**（保留 `additionalProperties: false`） | 这三个不带 `extra_kwargs`，其注入参数 `agent_state`/`ctx` 在校验前会被剔除，不触发 P0 |
-| `agent.yaml` | 在 `tools` 与 `middlewares` 之间补 `skills: []`（含「只留注释会被解析成 null」的提醒注释） | 消除 A4A 静态校验 `skills.invalid_type`：`skills` 是必需的列表字段，本模板不挂 skill 故为空列表 |
-| `systemprompt.md` | 新增 `# 运行时路径约定` 一节（在 `# 功能限制` 与 `# 上下文` 之间）：说明本 Agent 未挂 skill，但 skills 根目录位于 `/home/user/.skills/`，且读取 skill 内文件以 `LoadSkill` 返回的 `SkillFolder` 为权威路径 | 消除 A4A 静态校验 `agent.system_prompt.required_pattern_missing`：校验器无条件正则匹配这句话。写成一段带上下文的说明而非孤零零一行，避免对模型产生「我有 skill 可用」的误导 |
+| `agent.yaml` | 在 `tools` 与 `middlewares` 之间补 `skills: []`（含「只留注释会被解析成 null」的提醒注释） | 消除平台静态校验 `skills.invalid_type`：`skills` 是必需的列表字段，本模板不挂 skill 故为空列表 |
+| `systemprompt.md` | 新增 `# 运行时路径约定` 一节（在 `# 功能限制` 与 `# 上下文` 之间）：说明本 Agent 未挂 skill，但 skills 根目录位于 `/home/user/.skills/`，且读取 skill 内文件以 `LoadSkill` 返回的 `SkillFolder` 为权威路径 | 消除平台静态校验 `agent.system_prompt.required_pattern_missing`：校验器无条件正则匹配这句话。写成一段带上下文的说明而非孤零零一行，避免对模型产生「我有 skill 可用」的误导 |
 | `custom_tools/__pycache__/` | 删除（`finnhub_api.cpython-312.pyc`） | 本地运行遗留的字节码产物，不该进模板/制品包；`nexau.json` 的 `excluded` 只是打包端约定、平台不解析，靠它挡不住 |
 
 **裁剪掉的文件**：13 个 Finnhub `.tool.yaml`（earnings_calendar / earnings_surprises / esg / financials_reported / insider_sentiment / insider_transactions / ipo_calendar / lobbying / market_news / market_status / peers / recommendation / sec_filings）。

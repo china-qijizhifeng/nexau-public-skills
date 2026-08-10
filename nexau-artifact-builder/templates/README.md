@@ -72,11 +72,11 @@ NN-<slug>/
 ## 官方静态校验器
 
 平台自带一个**制品静态校验器**（比「框架能不能跑」严格得多）。本目录的模板都已按它校正过。
-复制改造完成后，**打包前跑一遍**：
+复制改造完成后，**打包前跑一遍**（校验器随平台分发，不在你的制品里）：
 
 ```bash
-S=<repo>/builtin-agents/Agent4Agent/skills/artifact-verifier/scripts
-R=<repo>/builtin-agents/Agent4Agent/skills/nexau-artifact-rules/references
+S=<校验器脚本目录>
+R=<规则文件目录>
 PYTHONPATH=$S python3 $S/validate_artifact_static.py \
   --artifact-root <你的制品目录> --rules-root $R 2>/dev/null
 ```
@@ -91,7 +91,7 @@ PYTHONPATH=$S python3 $S/validate_artifact_static.py \
 
 | error code | 出现在 | 性质 | 该怎么办 |
 |---|---|---|---|
-| `skills.references.index_missing`<br>`skills.references.directory_index_missing` | 所有带 `references/` 知识树的模板（01 / 07 / 08 / 10） | **平台缺陷**：校验器规则文件把 `index_file` 配成了 `SKILL.md`，与平台自己的散文规范（禁止 references 内用 `SKILL.md`）打架 | 平台把 `builder-static-rules.json:56` 改成 `"INDEX.md"` 即可（实测改完 0 error）。**不要为消错把索引改回 `SKILL.md`** |
+| `skills.references.index_missing`<br>`skills.references.directory_index_missing` | 所有带 `references/` 知识树的模板（01 / 07 / 08 / 10） | **平台缺陷**：校验器规则文件把 `index_file` 配成了 `SKILL.md`，与平台自己的散文规范（禁止 references 内用 `SKILL.md`）打架 | 平台把规则文件里的 `index_file` 改成 `"INDEX.md"` 即可（实测改完 0 error）。**不要为消错把索引改回 `SKILL.md`** |
 | `middleware.not_allowed`<br>`middleware.params.unexpected` | 09 / 10 | **有意偏离**：平台明确规定「middleware 不允许自由创新」，白名单只有 2 个。这不是误报 | 政企合规确实需要护栏（09 的敏感词就是），可以有意偏离但要向交付方说明；只是想调参的，优先 `params: {}` 用默认值 |
 
 除这两类之外的 error，一律当真问题查。

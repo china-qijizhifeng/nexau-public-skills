@@ -41,8 +41,7 @@ stop_tools:
   - complete_task
 
 # ⚠️ 三键必写（tools / skills / middlewares），子代理也不例外。
-#    框架侧这两个键其实是可选的（`schema.py:130 middlewares: ... | None = None`、
-#    `config/base.py:72 skills: list = Field(default_factory=list)`），平台静态校验器也
+#    框架侧这两个键其实是可选的（`middlewares` 允许为空、`skills` 默认就是空列表），平台静态校验器也
 #    【不会】递归进 sub_agents/ 目录，所以省略它们不会报错——但制品根 agent.yaml 缺了就是
 #    `skills.invalid_type` / `middlewares.invalid_type`。两边写法保持一致，别让人抄走一个
 #    在根目录会挂掉的范本。本子代理不带知识库、不需要拦截器，空列表就是语义正确的声明。

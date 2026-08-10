@@ -11,8 +11,8 @@ description: >-
 
 # NexAU Agent 制品开发指南
 
-> **事实源纪律**：本 skill 的每条硬结论都对着 NexAU 框架与 NAC 平台的实际代码核实过
-> （框架侧 = NexAU SDK `0.5.0-11-g1cd84b61`）。文档会过时，运行时的实际行为才是事实源。
+> **事实源纪律**：本 skill 的每条硬结论都对着 NexAU 框架与 NAC 平台的实际运行行为核实过
+> （框架侧 = NexAU SDK `0.5.0`）。文档会过时，运行时的实际行为才是事实源。
 > 与本文冲突时以实测为准。
 
 > ### 与平台侧 A4A 三个 skill 的关系（重要，别搞反上下游）
@@ -33,9 +33,9 @@ description: >-
 > 「已吸收 `nexau-artifact-builder` 的规则」），因此**原样保留了本 skill 后来纠正掉的错误**：
 > 「`string` 不读文件 / 必须 `jinja` 才能读文件」、「model 裸名静默回落」（实为每次 chat 422）、
 > 「`type`/`name` 必填」、「标配工具组合」、「不提供 `Glob` 和 `list_directory`」、
-> 以及一个并不存在的复制路径 `builtin-agents/building-team/...`。
+> 以及一条指向并不存在的目录的「内置工具 yaml 复制路径」。
 >
-> **⇒ 本 skill 与 A4A 那两份 .md 冲突时，以本 skill 为准；两边都存疑时以代码为准。**
+> **⇒ 本 skill 与 A4A 那两份 .md 冲突时，以本 skill 为准；两边都存疑时以实测行为为准。**
 
 ## 0. 怎么用本 skill
 
@@ -293,12 +293,12 @@ description: |
 > （`Skill.from_folder` 只在 skill 根目录找 `SKILL.md`）。`references/` 下面是**知识库层级，不是 skill**，
 > 不该占用 skill 专用的文件名——否则「哪个 SKILL.md 才是入口」永远是歧义。
 > 这与 `skill-knowledge-organizer` skill 的产出**完全一致**（它产出的就是 `INDEX.md`）。
-> 平台散文规范（`artifact-hard-rules.md:156`）**只在「不能用 `SKILL.md`」这半句上与我们一致**——
+> 平台散文规范（`artifact-hard-rules.md`）**只在「不能用 `SKILL.md`」这半句上与我们一致**——
 > 它推荐的具体名字是小写 `index.md` / `overview.md`；我们取 `INDEX.md`（与 organizer 对齐、且大写更醒目）。
 > 三方在「references 内不该出现 SKILL.md」这一点上没有分歧，分歧只在具体拼写。
 >
 > ⚠️ **但平台静态校验器当前会因此报错**：它的规则文件把索引名配成了 `SKILL.md`
-> （`builder-static-rules.json:56` `"index_file": "SKILL.md"`），于是 `INDEX.md` 版会被判
+> （`builder-static-rules.json` 里的 `"index_file": "SKILL.md"`），于是 `INDEX.md` 版会被判
 > `skills.references.index_missing` + 每个非空子目录一条 `directory_index_missing`。
 > **这是校验器配置与平台自己的散文规范打架，属平台缺陷**——修法是把那一行改成 `"INDEX.md"`
 > （已实测：改完 `INDEX.md` 版制品 0 error 通过）。详见 `references/artifact-spec-checklist.md` §8。

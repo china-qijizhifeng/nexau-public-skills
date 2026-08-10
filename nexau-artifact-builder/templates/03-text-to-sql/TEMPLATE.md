@@ -171,7 +171,7 @@ WHERE i.chain_id = 45 AND i.chain_position = 'up';
 
 ### ⚠️ P0：`extra_kwargs` × `additionalProperties: false` 互斥（cookbook 原版中招，本模板已修）
 
-`tool.py:548` 把 `extra_kwargs` 并进参数（`{**self.extra_kwargs, **params}`），`tool.py:572` 构造 `validation_params` 时**只剔除** `_INJECTED_PARAM_KEYS = {agent_state, global_storage, sandbox, ctx}`，**不剔除 extra_kwargs** → `db_path` 被送进 `tool.py:738` 的 `jsonschema.validate`。schema 又写了 `additionalProperties: false` 且 properties 里没有 `db_path` →
+框架在调用工具前会把 `extra_kwargs` 并进参数（等价于 `{**extra_kwargs, **params}`），然后拿这份合并结果去做 jsonschema 校验；校验前**只剔除**四个注入参数（`agent_state` / `global_storage` / `sandbox` / `ctx`），**不剔除 `extra_kwargs`** → `db_path` 原样进了校验。schema 又写了 `additionalProperties: false` 且 properties 里没有 `db_path` →
 
 ```
 ValueError: Invalid parameters for tool 'execute_sql': Additional properties are not allowed ('db_path' was unexpected)
@@ -191,7 +191,7 @@ ValueError: Invalid parameters for tool 'execute_sql': Additional properties are
 
 `db_path` 写错（比如写成相对路径 `./enterprise.sqlite`）不会在部署期报错，只在**每次调用**返回 error dict。`execute_sql.py` 会把 cwd、cwd 下的文件、以及在 `/agent` `/app` `/workspace` `/artifacts` 下搜到的 `*.sqlite*` 候选放进 **`returnDisplay`**——**先看这段排障信息再改 db_path**，别猜。
 
-注意这段信息**只给人看**：`returnDisplay` 会被默认 markdown formatter 剥掉、不进模型上下文（`markdown.py:18` `_DISPLAY_ONLY_KEYS`，见 `../../references/custom-tools.md` §6）。路径清单和目录列表对模型没有用，塞进顶层键只会烧 token 并把宿主机目录结构喂给模型——这正是「窄数据原则」要拦的。扫描本身也有闸门：只扫上面 5 个根、最多 20 条候选、超过 2 秒即停（截断时 `returnDisplay` 会注明）。
+注意这段信息**只给人看**：`returnDisplay` 会被默认 markdown formatter 剥掉、不进模型上下文（见 `../../references/custom-tools.md` §6）。路径清单和目录列表对模型没有用，塞进顶层键只会烧 token 并把宿主机目录结构喂给模型——这正是「窄数据原则」要拦的。扫描本身也有闸门：只扫上面 5 个根、最多 20 条候选、超过 2 秒即停（截断时 `returnDisplay` 会注明）。
 
 ### ⚠️ 打包硬约束
 
@@ -207,9 +207,9 @@ ValueError: Invalid parameters for tool 'execute_sql': Additional properties are
 
 systemprompt 已写「不要在回答中输出 SQL 语句」。删这条约束会让回答变成 SQL 教学。如果你的用户是数据分析师、**想看 SQL**，把这条改成「在结论之后附上使用的 SQL」。
 
-### ✅ 本模板已通过 A4A 静态校验器（`pass: true`，0 error）
+### ✅ 本模板已通过平台静态校验器（`pass: true`，0 error）
 
-用 `builtin-agents/Agent4Agent/skills/artifact-verifier` 跑本目录：`pass: true`。历史上曾剩的两条 error 已修：
+拿平台的制品静态校验器跑本目录：`pass: true`。历史上曾剩的两条 error 已修：
 
 | 曾经的 error code | 原状（cookbook 原版） | 已改成 |
 |---|---|---|
@@ -231,9 +231,9 @@ systemprompt 已写「不要在回答中输出 SQL 语句」。删这条约束�
 
 | 文件 | 改了什么 | 为什么 |
 |---|---|---|
-| `tools/execute_sql.tool.yaml` | **删除 `additionalProperties: false`**，替换成解释性注释 | P0：该工具配了 `extra_kwargs.db_path`，`tool.py:548/572/738` 会把它送进 jsonschema 校验，原版**每次调用必抛 ValueError**，按原样部署全线失败 |
-| `agent.yaml` | `llm_config` 删掉 `base_url` / `api_key` / `api_type` / `stream`，只留 `model` + `temperature`；加注释说明**本地裸跑 NexAU 时需自行补 base_url / api_key** | 这四项在 NAC 上写了没用：`base_url`/`api_key` 被 `server.py:1956-1957` 无条件覆盖，`api_type` 被模型卡派生值覆盖（`server.py:1496-1510`），`stream` 在流式路径被强制 True（`transports/base.py:134-135`）。留着是噪声，且 `api_key` 写字面量会被 A4A 静态校验判 error |
-| `agent.yaml` | `extra_kwargs.db_path` 上方加注释：`/agent` = 制品解包根目录（`cli.py:303` `AGENT_PROJECT_DIR` 默认值），并提示模板未附带示例库 | 裁掉示例库后，`/agent/enterprise.sqlite` 这个值必须解释清楚来源，否则复制者不知道该改成什么 |
+| `tools/execute_sql.tool.yaml` | **删除 `additionalProperties: false`**，替换成解释性注释 | P0：该工具配了 `extra_kwargs.db_path`，框架会把它一并送进 jsonschema 校验，原版**每次调用必抛 ValueError**，按原样部署全线失败 |
+| `agent.yaml` | `llm_config` 删掉 `base_url` / `api_key` / `api_type` / `stream`，只留 `model` + `temperature`；加注释说明**本地裸跑 NexAU 时需自行补 base_url / api_key** | 这四项在 NAC 上写了没用：`base_url`/`api_key` 被平台运行期无条件覆盖，`api_type` 被模型卡派生值覆盖，`stream` 在流式路径被强制 True。留着是噪声，且 `api_key` 写字面量会被平台静态校验判 error |
+| `agent.yaml` | `extra_kwargs.db_path` 上方加注释：`/agent` = 制品解包根目录（运行时的默认制品目录），并提示模板未附带示例库 | 裁掉示例库后，`/agent/enterprise.sqlite` 这个值必须解释清楚来源，否则复制者不知道该改成什么 |
 | `systemprompt.md` | 新增一行：skills 根目录位于 `/home/user/.skills/`，并说明以 `LoadSkill` 返回的 `<SkillFolder>` 为准 | 平台静态校验器（`builder-static-rules.json:required_systemprompt_patterns`）要求 systemprompt 显式写出这个根目录；原版没写 |
 | `custom_tools/execute_sql.py` | `search_roots` 里补上 `Path("/agent")` | 诊断分支原本搜 `/app` `/workspace` `/artifacts` `/tmp`，**唯独漏了 NAC 上真正的制品根目录 `/agent`** → 库找不到时给不出有用候选，误导排查 |
 | `enterprise.sqlite`（156 KB） | **已裁剪，未随模板附带** | 模板不携带示例数据。要跑通 cookbook 原样例请到 `nexau-cookbook/企业数据库问数/enterprise_data_agent/enterprise.sqlite` 取；正常用法是换成你自己的库（见「接自己的库」） |

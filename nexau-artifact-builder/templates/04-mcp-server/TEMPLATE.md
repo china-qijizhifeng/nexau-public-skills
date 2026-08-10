@@ -8,7 +8,7 @@
 ## 这个模板教你什么
 
 1. **`mcp_servers` 的完整可跑配置**：`type: http` + `url` + `headers` + `timeout`，以及三个 type（`stdio` / `http` / `sse`）的校验规则。
-2. **MCP 工具名会被强制加前缀** `mcp__<server_name>__<tool>`（`mcp_client.py:704`，无条件）——systemprompt 必须按前缀名写，否则模型会以为工具不存在。
+2. **MCP 工具名会被强制加前缀** `mcp__<server_name>__<tool>`（无条件，没有开关）——systemprompt 必须按前缀名写，否则模型会以为工具不存在。
 3. **MCP client 跑在 agent-runtime 进程里，不是沙箱里**——网络可达性、DNS、出网白名单全部要按 **runtime pod** 排查，`host.docker.internal` 的局限也源于此。
 4. **只读边界必须在 server 侧强制**（三层：SQL 前缀白名单 + 危险关键字黑名单 + 驱动层 `mode=ro` / 数据库只读账号），prompt 只是提示不是安全边界。
 5. **同一份 Agent 制品换后端零改动**：`sqlite_mcp_server` 与 `dm8_mcp_server` 工具契约完全一致，方言差异靠 `server_info()` 运行时自述（`limit_syntax`），不靠改 agent.yaml。
@@ -80,10 +80,23 @@
 # 本地/可达网络：确认 server 活着
 curl -sI -m 5 <your-mcp-url>     # 期望 405（HEAD 不允许但活着）或 200
 
-# 集群内地址：必须在 agent-runtime pod 里验，不是在你本机
-kubectl exec -n <ns> deploy/<agent-runtime> -- getent hosts <mcp-host>
-kubectl exec -n <ns> deploy/<agent-runtime> -- curl -sI -m 5 <your-mcp-url>
 ```
+
+⚠️ **本机 curl 通 ≠ Agent 那边通**。Agent 跑在平台的运行环境里，出口和 DNS 都和你本机不同——
+内网地址、`localhost`、只对你办公网开放的域名，在那边多半解析不到。
+
+**没有集群权限时怎么验**（推荐，这也是绝大多数使用者的情况）：部署后在 Playground 里
+提一句必然触发该 MCP 工具的话，让 Agent 真调一次，然后看返回：
+
+| 你看到 | 说明 |
+|---|---|
+| 工具正常返回结果 | 连通性没问题 |
+| 报 DNS 解析失败 / 名称无法解析 | 平台侧解析不到这个域名，换公网可达地址，或联系平台方确认网络策略 |
+| 报连接超时 / 拒绝 | 域名解析到了但连不上，多半是防火墙或出网策略 |
+
+⇒ 后两种**不是你改制品能解决的**，带上 MCP 地址、报错原文、发生时间联系平台方。
+
+（如果你恰好是私有化部署、手上有集群权限，也可以直接进运行环境验 DNS 与连通性，比上面快。）
 
 ---
 
@@ -136,7 +149,7 @@ systemprompt 里写的是规则而不是结论：
 
 cookbook 原版 `agent.yaml` 在 headers 下留了一行注释样例 `# 公网部署加: Authorization: Bearer ${env.MCP_TOKEN}`。
 
-`${env.X}` 的替换发生在 **`yaml.safe_load` 之前，对整份文件原文做正则替换**（`nexau/archs/main_sub/utils/common.py:84-92`），**注释不豁免**；变量没设置直接 `ConfigError: Environment variable 'MCP_TOKEN' is not set`。也就是说那行「无害的注释」会让整个 agent 起不来。
+`${env.X}` 的替换发生在 **`yaml.safe_load` 之前，对整份文件原文做正则替换**，**注释不豁免**；变量没设置直接 `ConfigError: Environment variable 'MCP_TOKEN' is not set`。也就是说那行「无害的注释」会让整个 agent 起不来。
 
 - 修法：本模板已删掉该注释样例，改成纯文字说明。
 - 你要启用鉴权时：**先建 runtime scope 的 `MCP_TOKEN` 并重新部署**，再往 `headers` 里加真正的 `Authorization: Bearer ${env.MCP_TOKEN}`（真实一行，不是注释）。
@@ -151,7 +164,7 @@ DNS 解析失败（`Name or service not known`）会被当成 **tool 调用结�
 
 ### ⚠️ 坑 3：MCP 工具名带 `mcp__<server>__` 前缀
 
-`mcp_client.py:704` 无条件 `prefixed_name = f"mcp__{server_name}__{tool_name}"`。tutorial 说「不同运行时版本可能直接显示原始工具名」——当前源码里**没有**这条分支，前缀是确定的。改了 `mcp_servers[*].name` 就要同步改 systemprompt 里的前缀。
+框架在装载 MCP 工具时**无条件**把工具名重写成 `mcp__{server_name}__{tool_name}`，没有任何开关或分支。tutorial 说「不同运行时版本可能直接显示原始工具名」——实测不存在这种情形，前缀是确定的。改了 `mcp_servers[*].name` 就要同步改 systemprompt 里的前缀。
 
 ### ⚠️ 坑 4：`Host` header 是「本机调试专用的欺骗」，不是通用配置
 
@@ -171,10 +184,10 @@ dmPython 2.5.x 的 wheel 把 `libssl/libcrypto` 装在 `site-packages/dmssl/`，
 
 macOS 上 `uv sync` 必失败，`dm8_mcp_server/start.sh` 会提前 `exit 3`。Mac 本地教学一律走 `sqlite_mcp_server`；要验真实 DM8 链路请 SSH 到 Linux 主机。
 
-### ⚠️ 坑 8：cookbook 原版这四条过不了 A4A 静态校验器（**本模板已全部修掉**）
+### ⚠️ 坑 8：cookbook 原版这四条过不了平台静态校验器（**本模板已全部修掉**）
 
 「零工具注册、全靠 MCP」是这个场景的卖点，但它恰好踩中官方制品规范的四条硬要求。
-用 `builtin-agents/Agent4Agent/skills/artifact-verifier` 实测 cookbook 原版的 `db_mcp_agent/`，四条 error：
+拿平台的制品静态校验器实测 cookbook 原版的 `db_mcp_agent/`，四条 error：
 
 | error code | cookbook 原版现状 | 本模板已如何修 |
 |---|---|---|
@@ -188,7 +201,7 @@ macOS 上 `uv sync` 必失败，`dm8_mcp_server/start.sh` 会提前 `exit 3`。M
 
 ### ⚠️ 坑 9：可达性要在 **agent-runtime pod** 里验，不是沙箱
 
-cookbook 自查清单写的是「NAC 沙箱是否能访问 `mcp_servers.url`」——**错的**。MCP client 是 `agent-runtime` 进程内的 httpx（`nexau/archs/tool/builtin/mcp_client.py`），跟沙箱没有任何关系。网络策略、出网白名单、DNS 都要针对 runtime pod 配。
+cookbook 自查清单写的是「NAC 沙箱是否能访问 `mcp_servers.url`」——**错的**。MCP client 是 `agent-runtime` 进程内的 httpx 客户端，跟沙箱没有任何关系。网络策略、出网白名单、DNS 都要针对 runtime pod 配。
 
 ---
 
@@ -196,13 +209,13 @@ cookbook 自查清单写的是「NAC 沙箱是否能访问 `mcp_servers.url`」�
 
 | 文件 | 改了什么 | 为什么 |
 |---|---|---|
-| `db_mcp_agent/agent.yaml` | 删除 headers 注释里的 `${env.MCP_TOKEN}` 字面量，改为纯文字说明 + 指向 TEMPLATE.md | **P0**：`${env.X}` 在 `yaml.safe_load` 前对整份原文替换，注释不豁免；变量没配 → 加载期 `ConfigError`，agent 直接起不来（common.py:84-92） |
-| `db_mcp_agent/agent.yaml` | `llm_config` 删 `stream: false` 与 `api_type: openai_chat_completion`，补 `model: ${env.LLM_MODEL}` | NAC 上 `base_url`/`api_key`（server.py:1956-1957）、`api_type`（server.py:1496-1510）被无条件覆盖，`stream` 在流式路径被强制 True（transports/base.py:134-135）——写了是噪声；收敛成「model + 业务采样参数」的推荐最小写法 |
+| `db_mcp_agent/agent.yaml` | 删除 headers 注释里的 `${env.MCP_TOKEN}` 字面量，改为纯文字说明 + 指向 TEMPLATE.md | **P0**：`${env.X}` 在 `yaml.safe_load` 前对整份原文替换，注释不豁免；变量没配 → 加载期 `ConfigError`，agent 直接起不来 |
+| `db_mcp_agent/agent.yaml` | `llm_config` 删 `stream: false` 与 `api_type: openai_chat_completion`，补 `model: ${env.LLM_MODEL}` | NAC 上 `base_url`/`api_key` 与 `api_type` 都被平台运行期无条件覆盖，`stream` 在流式路径被强制 True——写了是噪声；收敛成「model + 业务采样参数」的推荐最小写法 |
 | `db_mcp_agent/agent.yaml` | `llm_config` 上方加注释：本地裸跑 NexAU 需自行补 `base_url` / `api_key` | 收敛后脱离 NAC 就没有连接信息了，必须提示 |
 | `db_mcp_agent/agent.yaml` | `url` 上方注释「NAC 沙箱可达」→「NAC runtime 可达」 | MCP client 跑在 agent-runtime 进程内，与沙箱无关；写成沙箱会把排查方向带偏 |
 | `db_mcp_agent/agent.yaml` | `Host` 注释补上「sqlite_mcp_server 开了 DNS rebinding 防护」 | 原注释说「MCP server 的防护」，但 `dm8_mcp_server` 并没配 `transport_security`，笼统说法会误导 |
 | `db_mcp_agent/agent.yaml` | 注释里的 `../tutorial-database-mcp.md` 指向改为 TEMPLATE.md | tutorial 已不在模板目录内 |
-| `db_mcp_agent/systemprompt.md` | 新增「## 可用工具」段，写明实际工具名是 `mcp__enterprise_ops_db__*` | `mcp_client.py:704` 无条件加前缀；prompt 里只写短名会让模型误判工具不存在 |
+| `db_mcp_agent/systemprompt.md` | 新增「## 可用工具」段，写明实际工具名是 `mcp__enterprise_ops_db__*` | 框架无条件给 MCP 工具名加前缀；prompt 里只写短名会让模型误判工具不存在 |
 | `sqlite_mcp_server/uv.lock`、`dm8_mcp_server/uv.lock` | **已裁剪** | 体积大且随依赖版本漂移；`start.sh` 走的是 `uv sync`（非 `--frozen`），缺 lock 会重新解析，不影响可跑性。需要精确复现原始依赖版本时去 cookbook 原始目录取 |
 | `tutorial-database-mcp.md` | **已裁剪**（内容已提炼进本文「关键设计要点」/「已知的坑」） | 模板目录只留可直接复制的制品与参考实现 |
 | `db_mcp_agent/agent.yaml` | 显式补上 `tools: []` / `skills: []` / `middlewares: []` 三个空键 | 平台官方制品规范 `required_list_fields` 要求这三个键必须存在（缺键报 `tools.invalid_type` 等）。本 Agent 能力全来自 MCP，确实一个都不挂，但键要写出来 |

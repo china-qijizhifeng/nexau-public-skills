@@ -170,7 +170,7 @@
 | `nexau.json` / `tools/*.tool.yaml` / `skills/**` 的其余部分 | **内容逐字未改**；仅 `references/` 下 14 个各层索引**改名** `SKILL.md` → `INDEX.md`（见下 §索引文件命名），33 篇叶子与 `nexau.json` / `tools/*.tool.yaml` 一字未动 | 无过时项：三个 binding 在框架里都存在，`tool_call_mode` 原本就是合法的 `structured`，`additionalProperties: false` 在无 `extra_kwargs` 的场景下安全；改名只动文件名、不动任何一个字节的内容 |
 
 > 复核记录（交叉复核轮）：上一轮曾把 `references/` 裁到「14 个索引 + 3 篇叶子」并附 `_FULL-TREE.txt`。
-> 实测该裁剪会让保留下来的 14 个索引指向 41 条不存在的路径 —— A4A 静态校验器
+> 实测该裁剪会让保留下来的 14 个索引指向 41 条不存在的路径 —— 平台静态校验器
 > （`skill_reference_rules.require_referenced_paths_exist`）报 41 条 `skills.references.path_missing`，
 > 运行时 Agent 也会按索引去 `read_file` 一堆不存在的文件。**已整树还原为 cookbook 原样**
 > （代价仅 +130 KB），`_FULL-TREE.txt` 随之删除。**裁知识库时务必连索引一起裁，别只删叶子。**
@@ -197,8 +197,8 @@ skills/labor-lawyer-cn/
 - `skill-knowledge-organizer` 产出的正是 `INDEX.md`，**不用改名**，直接可用。
 - ⚠️ **平台静态校验器当前会报 14 条 error**（1 条 `index_missing` + 13 条 `directory_index_missing`），
   因为它的规则文件把 `index_file` 配成了 `SKILL.md`。
-  **这是平台配置缺陷**，修法是把 `builder-static-rules.json:56` 改成 `"INDEX.md"`（实测改完 0 error 通过）。
-  ⚠️ 但 `builder-static-rules.json` 是 NAC 仓里受控的**平台**规则文件，需由平台维护者走 PR 修改；
+  **这是平台配置缺陷**，修法是把规则文件里的 `index_file` 改成 `"INDEX.md"`（实测改完 0 error 通过）。
+  ⚠️ 但那份规则文件是**平台侧受控**的，需由平台维护者修改；
   **制品作者 / 生成 agent 不要为了让自己的制品过检而就地编辑它**——那会静默改变所有使用者的校验口径。
   在平台修掉之前，把这 14 条 error 当已知噪声即可。
   详见 `../../references/artifact-spec-checklist.md` §8。

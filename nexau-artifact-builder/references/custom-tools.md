@@ -85,9 +85,9 @@ input_schema:
   # ⚠️ agent_state / sandbox / ctx / global_storage 一律不能出现在这里（含 properties 下面）
 ```
 
-`.tool.yaml` 的合法顶层字段被 pydantic `ToolYamlSchema`（`extra="forbid"`，`nexau/archs/tool/tool.py:215-232`）锁死，只有：`type / name / description / input_schema / skill_description / disable_parallel / lazy / defer_loading / search_hint / template_override / builtin / binding / formatter`。写别的 key 直接加载失败。
+`.tool.yaml` 的合法顶层字段被一个 `extra="forbid"` 的 pydantic schema 锁死，只有：`type / name / description / input_schema / skill_description / disable_parallel / lazy / defer_loading / search_hint / template_override / builtin / binding / formatter`。写别的 key 直接加载失败。
 
-`$schema: http://json-schema.org/draft-07/schema#` **不是必须**——框架用 `validator_for(input_schema)` 自动选 validator（`tool.py:744-752`）。
+`$schema: http://json-schema.org/draft-07/schema#` **不是必须**——框架会按 `input_schema` 自动挑选对应的 JSON Schema validator。
 
 ### ③ `agent.yaml` 注册
 
@@ -108,15 +108,15 @@ tools:
 
 | | custom tool 的 Python 函数 | `read_file` / `run_shell_command` 等内置工具**的副作用落点** |
 |---|---|---|
-| 代码在哪跑 | **agent-runtime 进程内**（`tool.py:579` `impl(**filtered_params)` 直接调用） | Python 部分**同样**在 agent-runtime 进程内（内置工具就是普通 binding 函数，签名同样声明 `agent_state=None`），只是它们**全部通过 sandbox 句柄**做 IO |
+| 代码在哪跑 | **agent-runtime 进程内**（框架直接以过滤后的参数调用你的函数） | Python 部分**同样**在 agent-runtime 进程内（内置工具就是普通 binding 函数，签名同样声明 `agent_state=None`），只是它们**全部通过 sandbox 句柄**做 IO |
 | 文件/命令实际落在 | runtime 容器自己的文件系统：制品挂在 `/agent`（Python Runtime 下**只读**），**cwd = `/home/user`** | 沙箱容器（E2B HTTP RPC → sandboxd），cwd = `/home/user` |
 | `os.getenv` 读到的 | runtime pod 的 env（runtime scope） | 沙箱 env（sandbox scope），两者**互不可见** |
 
-> 换句话说：**内置工具和自定义工具是同一套契约**，唯一区别是内置工具从不裸 `open()`，一律走 sandbox 句柄。想不出该怎么写时，直接照抄 `nexau/archs/tool/builtin/file_tools/` 下的实现。
+> 换句话说：**内置工具和自定义工具是同一套契约**，唯一区别是内置工具从不裸 `open()`，一律走 sandbox 句柄。想不出该怎么写时，照着 §2 的两条取沙箱路径写。
 
 ### 🚫 最阴的一条：两边都有 `/home/user`，而且都能写
 
-runtime 容器里 `/home/user` **真实存在且可写**，还正好是进程的工作目录（ `mkdir -p … /home/user` + `:149` `WORKDIR /home/user`；`k8s.rs:2127` `working_dir: Some("/home/user")`）。所以：
+runtime 容器里 `/home/user` **真实存在且可写**，还正好是进程的工作目录。所以：
 
 ```python
 open("/home/user/report.md", "w").write(x)   # 🚫 不报错、静默成功
@@ -149,11 +149,10 @@ def my_tool(q: str, agent_state: AgentState | None = None) -> dict:
     abs_path = resolve_path("out/report.md", sandbox)   # 相对路径拼 sandbox.work_dir
 ```
 
-- 注入源头：`nexau/archs/main_sub/execution/tool_executor.py:257-258`（`execution_params["agent_state"]` / `["sandbox"]`）+ `:261`（`["ctx"]`，仅当 `framework_context is not None`）。除 `LoadSkill` 外所有工具执行前都会先 `agent_state.get_sandbox()`（`tool_executor.py:135-136`）。
-- helper 定义：`nexau/archs/tool/builtin/_sandbox_utils.py:17-31`。
+- 注入时机：框架在执行工具前把 `agent_state` / `sandbox` 装配进调用参数（`ctx` 只在存在框架上下文时注入）。除 `LoadSkill` 外，所有工具执行前框架都会先取一次沙箱句柄。
 - 选 A 还是 B：只用文件/命令 → A 更短；还要 `global_storage` / `get_variable` / `get_sandbox_env` → 用 B（`agent_state` 能拿到更多东西）。
 
-### BaseSandbox 常用方法签名（全部**同步**，定义见 `nexau/archs/sandbox/base_sandbox.py:581-1005`）
+### BaseSandbox 常用方法签名（全部**同步**）
 
 | 方法 | 签名要点 | 返回 |
 |---|---|---|
@@ -165,47 +164,35 @@ def my_tool(q: str, agent_state: AgentState | None = None) -> dict:
 | `list_files` | `(directory_path, recursive=False, pattern=None)` | `list[FileInfo]` |
 | `glob` | `(pattern, recursive=True, user=None)` | `list[str]` |
 | `file_exists` | `(file_path)` | `bool` |
-| `get_file_info` / `create_directory` / `delete_file` / `edit_file` | 见源码 | — |
+| `get_file_info` / `create_directory` / `delete_file` / `edit_file` | 同族方法，参数风格与上面一致 | — |
 | `upload_file` / `download_file` / `upload_directory` / `download_directory` | 本地 ↔ 沙箱 | `FileOperationResult` |
 
-> ⚠️ **`timeout` 单位是毫秒**（`base_sandbox.py:603` docstring `Optional timeout in milliseconds`）。写 `timeout=120` 意思是 0.12 秒。而 agent.yaml 顶层的 `timeout: 300` 是**秒**，别混。
-> 沙箱 `work_dir` 默认 `/home/user`（`base_sandbox.py:169` `E2B_DEFAULT_WORK_DIR`；NAC 侧 `server.py:3148` 显式传 `work_dir="/home/user"`）。
+> ⚠️ **`timeout` 单位是毫秒**（方法 docstring 里写的就是 `Optional timeout in milliseconds`）。写 `timeout=120` 意思是 0.12 秒。而 agent.yaml 顶层的 `timeout: 300` 是**秒**，别混。
+> 沙箱 `work_dir` 默认 `/home/user`，NAC 上也显式固定成它。
 
 ---
 
 ## 3. 4 个保留注入参数名
 
-框架保留的参数名共 4 个，常量在 `tool.py:52`：
-
-```python
-_INJECTED_PARAM_KEYS = frozenset({"agent_state", "global_storage", "sandbox", "ctx"})
-```
+框架保留的参数名共 4 个：`agent_state` / `global_storage` / `sandbox` / `ctx`。
 
 | 参数名 | 类型 | 注入条件 |
 |---|---|---|
 | `agent_state` | `AgentState` | 签名里有就注入 |
-| `sandbox` | `BaseSandbox` | 签名里有就注入（框架自带文档漏写了它，但代码支持：`tool.py:568` + `tool_executor.py:258`） |
-| `ctx` | `FrameworkContext` | 签名里有就注入。**不写类型标注**只打 warning；**标注成 `FrameworkContext` 以外的类型直接 `ConfigError`**（`tool.py:446-478`），要么正确标注 `ctx: FrameworkContext`（`from nexau.archs.main_sub.framework_context import FrameworkContext`），要么干脆不标 |
+| `sandbox` | `BaseSandbox` | 签名里有就注入（框架自带文档漏写了它，但运行期确实会注入，实测可用） |
+| `ctx` | `FrameworkContext` | 签名里有就注入。**不写类型标注**只打 warning；**标注成 `FrameworkContext` 以外的类型直接 `ConfigError`**，要么正确标注 `ctx: FrameworkContext`（`from nexau.archs.main_sub.framework_context import FrameworkContext`），要么干脆不标 |
 | `global_storage` | dict | **只在函数没声明 `agent_state` 时才注入**，见下方坑 |
 
-规则（`tool.py:552-573`）：
+规则：
 
 1. **按签名参数名匹配**：签名里没有的键会被 `pop` 掉，所以不写就不会 `TypeError`。
 2. **一律给默认值**（`agent_state: AgentState | None = None`），防止调用路径变化导致 `TypeError`。
 3. **绝不能写进 `input_schema`**（含 `properties` 下面，见 §5）。
-4. **`extra_kwargs` 不能用 `agent_state` / `global_storage` / `ctx` 当 key**（`tool.py:291-296` 直接 `ConfigError`）；⚠️ 但 **`sandbox` 不在这个保留列表里**——用 `sandbox` 当 extra_kwargs 的 key 不会报错，却会和框架注入撞车，禁止这么写。
+4. **`extra_kwargs` 不能用 `agent_state` / `global_storage` / `ctx` 当 key**（加载期直接 `ConfigError`）；⚠️ 但 **`sandbox` 不在这个保留列表里**——用 `sandbox` 当 extra_kwargs 的 key 不会报错，却会和框架注入撞车，禁止这么写。
 
 ### 🚫 坑：`agent_state` 和 `global_storage` 不能同时声明
 
-`global_storage` 的注入逻辑**嵌在「函数没声明 agent_state」这个分支里**（`tool.py:560-567`；`execute_async` 同款逻辑在 `tool.py:672-679`）：
-
-```python
-if "agent_state" in merged_params:
-    if "agent_state" not in sig.parameters:
-        filtered_params.pop("agent_state", None)
-        if "global_storage" in sig.parameters:              # ← 只在这个分支里注入
-            filtered_params["global_storage"] = agent_state.global_storage
-```
+`global_storage` 的注入**嵌在「函数没声明 `agent_state`」这个分支里**：框架只有在发现签名里**没有** `agent_state` 时，才顺手把 `agent_state.global_storage` 填给 `global_storage` 形参；签名里已经声明了 `agent_state`，这一步整个跳过（sync / async 两条执行路径同款逻辑）。
 
 后果：
 
@@ -227,7 +214,7 @@ def my_tool(*args, **kwargs):                       # 🚫 sig.parameters == {'a
     agent_state = kwargs.get("agent_state")         # 同上
 ```
 
-`"agent_state" in sig.parameters` 恒为 `False` → `tool.py:562` 把它 `pop` 掉。**不报错、不告警、没有日志**，工具照常执行，只是永远拿不到沙箱。四个保留参数（`agent_state` / `sandbox` / `ctx` / `global_storage`）全部适用。
+`"agent_state" in sig.parameters` 恒为 `False` → 框架在调用前把它 `pop` 掉。**不报错、不告警、没有日志**，工具照常执行，只是永远拿不到沙箱。四个保留参数（`agent_state` / `sandbox` / `ctx` / `global_storage`）全部适用。
 
 **为什么这个坑特别容易踩**：为了「兼容不同 runner 既可能传 kwargs、也可能传单个 dict」，很多制品会写一个 `_payload(args, kwargs)` 归一化函数，于是签名自然就成了 `(*args, **kwargs)`——一旦这么写，注入参数就永久失联。而且失联后代码往往会「顺理成章」地回落到裸 `open()` / `pathlib`，直接踩进 §1 的进程边界坑：读不到 agent 的工作文件、或把文件静默写进 runtime 容器。
 
@@ -251,7 +238,7 @@ for mod,fn in [('document_tools','read_document')]:          # 换成你的 (模
     print(fn, names, 'agent_state 可注入:', 'agent_state' in names)"
 ```
 
-> 真实事故：某制品的 `read_document` / `file_exists` / `replace` / `write_docx_file` 四个自定义工具全部写成 `(*args, **kwargs)` + 裸 `pathlib`。表现是 agent 读用户上传的文档恒报 `File not found`——文件在沙箱的 `/home/user/uploads/`，而工具在 runtime 容器里找。因为返回的是普通 dict 而非异常，**runtime 日志零 warn/error、sandbox-proxy 无任何请求记录、trace 里也没有失败 span**，整条链路在可观测层面完全静默，只能靠对话结果反推。其中 `write_docx_file` 更隐蔽：它在 runtime 容器里写文件会**真的成功**，`created: True` 照常返回，agent 汇报「文档已生成」，但沙箱里没有这个文件、用户下载不到。
+> 真实事故：某制品的 `read_document` / `file_exists` / `replace` / `write_docx_file` 四个自定义工具全部写成 `(*args, **kwargs)` + 裸 `pathlib`。表现是 agent 读用户上传的文档恒报 `File not found`——文件在沙箱的 `/home/user/uploads/`，而工具在 runtime 容器里找。因为返回的是普通 dict 而非异常，**runtime 日志零 warn/error、沙箱侧没有任何请求记录、trace 里也没有失败 span**，整条链路在可观测层面完全静默，只能靠对话结果反推。其中 `write_docx_file` 更隐蔽：它在 runtime 容器里写文件会**真的成功**，`created: True` 照常返回，agent 汇报「文档已生成」，但沙箱里没有这个文件、用户下载不到。
 
 ---
 
@@ -261,18 +248,9 @@ for mod,fn in [('document_tools','read_document')]:          # 换成你的 (模
 ```
 ValueError: Invalid parameters for tool 'my_tool': Additional properties are not allowed ('api_token' was unexpected). params={'api_token': 'SECRET', 'q': 'hi'}
 ```
-（本条已在本仓 `agent-runtime` 环境用真实 `Tool.from_yaml(...).execute(...)` 复现，上面是原样报错文本。）
+（本条已用真实的 `Tool.from_yaml(...).execute(...)` 复现，上面是原样报错文本。）
 
-**机制**（`tool.py:548` → `572-573`）：
-
-```python
-merged_params   = {**self.extra_kwargs, **params}          # extra_kwargs 先铺，模型传参在后（会覆盖同名键）
-...
-validation_params = {k: v for k, v in filtered_params.items() if k not in _INJECTED_PARAM_KEYS}
-self.validate_params(validation_params)                     # → jsonschema.validate(params, input_schema)
-```
-
-关键：`validation_params` **只剔除 4 个 `_INJECTED_PARAM_KEYS`，不剔除 `extra_kwargs`**。所以 `api_token` 会被送进 jsonschema 校验；schema 又写了 `additionalProperties: false` 且 properties 里没有它 → 必然报错。
+**机制**：框架先铺一层 `extra_kwargs`、再用模型传的参数覆盖同名键，合成一份完整参数；送去 jsonschema 校验前，它**只剔除 §3 那 4 个注入参数名，不剔除 `extra_kwargs`**。所以 `api_token` 会被送进校验；schema 又写了 `additionalProperties: false` 且 properties 里没有它 → 必然报错。
 
 **两种正确写法**：
 
@@ -281,7 +259,7 @@ self.validate_params(validation_params)                     # → jsonschema.val
 | (a) 删掉 `additionalProperties` | 该工具的 `input_schema` 里**不写** `additionalProperties` 这一行 | ❌ 不可见（安全） | ✅ **默认选它** |
 | (b) 把 key 声明进 `properties` | `properties: { api_token: {type: string, ...} }` | ✅ 模型能看见 | 🚫 密钥场景不可接受 |
 
-为什么 (b) 对密钥不可接受：`merged_params = {**extra_kwargs, **params}` 里 **params 在后**，模型传的同名参数会**覆盖** extra_kwargs 的值——等于把密钥的控制权交给了模型。密钥必须走 (a)。
+为什么 (b) 对密钥不可接受：合并时**模型传参在后**，模型传的同名参数会**覆盖** extra_kwargs 的值——等于把密钥的控制权交给了模型。密钥必须走 (a)。
 
 > ⚠️ **抄任何模板/样例前先跑这条机械判据**：
 > 对 `agent.yaml` 里每个带 `extra_kwargs:` 的 tools 条目，打开它 `yaml_path` 指向的 `.tool.yaml`，若 `input_schema` 里有 `additionalProperties: false` → **删掉那一行**。
@@ -299,15 +277,7 @@ self.validate_params(validation_params)                     # → jsonschema.val
 
 ## 5. `input_schema` 保留字守卫只查顶层 key
 
-`Tool.from_yaml` 会拒绝 `input_schema` 里出现保留字（`tool.py:357-373`）：
-
-```python
-if "global_storage" in input_schema: raise ValueError(...)
-if "agent_state"    in input_schema: raise ValueError(...)
-if "ctx"            in input_schema: raise ValueError(...)
-```
-
-⚠️ 三处判断的对象都是 `input_schema` **本身**，不是 `input_schema["properties"]`。后果：
+`Tool.from_yaml` 会拒绝 `input_schema` 里出现保留字 —— 但它只查三个名字（`global_storage` / `agent_state` / `ctx`），而且**查的对象是 `input_schema` 本身，不是 `input_schema["properties"]`**。后果：
 
 | 写法 | 结果 |
 |---|---|
@@ -322,7 +292,7 @@ if "ctx"            in input_schema: raise ValueError(...)
 
 ## 6. 返回值语义：任意类型都合法
 
-`tool.py:606-622`（`execute`）/ `700-715`（`execute_async`）的包装规则：
+框架对返回值的包装规则（`execute` / `execute_async` 两条路径一致）：
 
 | 函数返回 | 框架最终结果 |
 |---|---|
@@ -335,15 +305,15 @@ if "ctx"            in input_schema: raise ValueError(...)
 
 ### 🚫 修正一个常见错误说法
 
-cookbook 的注释写「返回 dict 模型看不到字段」——**这是错的**。默认 markdown formatter（`nexau/archs/tool/formatters/markdown.py`）的真实行为：
+cookbook 的注释写「返回 dict 模型看不到字段」——**这是错的**。默认 markdown formatter 的真实行为：
 
-1. 只有 **`returnDisplay`** 会被剥掉不发给 LLM（`markdown.py:18` `_DISPLAY_ONLY_KEYS = frozenset({"returnDisplay"})`）；剥离是**递归**的（`markdown.py:71-79`），嵌套 dict/list 里的 `returnDisplay` 也会被剥。
-2. 剥掉 `returnDisplay` 后**恰好只剩单个 `content`（或单个 `result`）键** → 直通裸值（`markdown.py:47-68`）。
-3. 否则**其余所有字段都会被渲染进模型可见文本**（Metadata 段 + Body 段，`markdown.py:88-107`）。
+1. 只有 **`returnDisplay`** 这一个键会被剥掉不发给 LLM；剥离是**递归**的，嵌套 dict/list 里的 `returnDisplay` 也会被剥。
+2. 剥掉 `returnDisplay` 后**恰好只剩单个 `content`（或单个 `result`）键** → 直通裸值。
+3. 否则**其余所有字段都会被渲染进模型可见文本**（Metadata 段 + Body 段）。
 
-这套 formatter 就是真实的 LLM-facing 路径：`tool_executor.py:350` `tool.format_output_for_llm(...)`；未在 tool.yaml 显式配 `formatter` 时默认回落 `markdown`（`tool.py:398-408`）。
+这套 formatter 就是真实的 LLM-facing 路径；未在 tool.yaml 显式配 `formatter` 时默认回落 `markdown`。
 
-实测（本仓真实运行）：
+实测：
 
 ```python
 {"content": "body", "returnDisplay": "ui only", "total_available": 42}
@@ -365,15 +335,15 @@ cookbook 的注释写「返回 dict 模型看不到字段」——**这是错的
 
 两类失败，语义完全不同：
 
-| 失败点 | 行为 | 代码 |
-|---|---|---|
-| **工具函数内部抛异常** | 被 Tool 层吞掉，转成 `{"error": str(e), "error_type": ..., "traceback": ..., "tool_name": ...}` **返回给模型**，走完整 formatter 链 | `tool.py:626-636`（async 同款 `:719-729`） |
-| **schema 校验失败** | Tool 层抛 `ValueError`（发生在 `try` **之前**），不走上面的兜底；**但 Executor 还有一层兜底**，最终模型收到的是错误串 `Invalid parameters for tool 'x': …` 而不是 crash | `tool.py:572-573` → `:737-742`，兜底在 `execution/executor.py:2779-2780`（sync）/ `:2150-2151`（async） |
-| `AskPermission` / `PermissionDenied` | 唯一会穿透 Tool 层的两个异常（由 Executor 转成 Ask/Deny outcome） | `tool.py:626-628` |
+| 失败点 | 行为 |
+|---|---|
+| **工具函数内部抛异常** | 被 Tool 层吞掉，转成 `{"error": str(e), "error_type": ..., "traceback": ..., "tool_name": ...}` **返回给模型**，走完整 formatter 链（sync / async 同款） |
+| **schema 校验失败** | Tool 层抛 `ValueError`，发生在上面那层兜底**之前**，所以不走它；**但 Executor 还有一层兜底**，最终模型收到的是错误串 `Invalid parameters for tool 'x': …` 而不是 crash |
+| `AskPermission` / `PermissionDenied` | 唯一会穿透 Tool 层的两个异常（由 Executor 转成 Ask/Deny outcome） |
 
 **两条路都不会让 agent 崩**，区别只在模型看到什么：前者是结构化 `{error, error_type, traceback, tool_name}`（会被渲染成 Metadata + Body），后者是一行原始 `ValueError` 文本。
 
-实测（本仓真实运行）：
+实测：
 
 ```python
 raise RuntimeError("kaboom")
@@ -401,14 +371,12 @@ except httpx.TimeoutException:
 
 ## 8. 两套路径基准（agent.yaml 放子目录时最容易踩）
 
-（下表 `config.py` = `nexau/archs/main_sub/config/config.py`，`common.py` = `nexau/archs/main_sub/utils/common.py`）
-
-| 字段 | 基准 | 代码 |
-|---|---|---|
-| `tools[].binding` | **制品根目录**（Python 模块路径，走 `importlib.import_module`） | `common.py:21-50`；NAC runtime 把 `<制品根>` 与 `<制品根>/src` 前插 sys.path + PYTHONPATH，见  |
-| `tools[].yaml_path` | **当前 agent.yaml 所在目录** | `config.py:1211` `_resolve_config_path(yaml_path, base_path)`，`base_path = config_path.parent`（`config.py:220-224`） |
-| `sub_agents[].config_path` | 同上 | `config.py:947`（`_resolve_config_resource`，同一套 base_path 语义） |
-| `system_prompt` | 同上 | `config.py:1108-1116` 走同一套 `_resolve_config_path` |
+| 字段 | 基准 |
+|---|---|
+| `tools[].binding` | **制品根目录**（Python 模块路径，走 `importlib.import_module`）。NAC runtime 会把 `<制品根>` 与 `<制品根>/src` 前插进 `sys.path` 和 `PYTHONPATH` |
+| `tools[].yaml_path` | **当前 agent.yaml 所在目录**（框架用 agent.yaml 文件自身的父目录当 base path） |
+| `sub_agents[].config_path` | 同上，同一套 base path 语义 |
+| `system_prompt` | 同上，同一套 base path 语义 |
 
 制品根放 `agent.yaml` 时两者看起来一样，一旦把 agent.yaml 放进 `agents/` 子目录就分叉：
 
@@ -438,8 +406,8 @@ tools:
 
 其它两条：
 
-- `binding` 里**含 `os.sep` 或以 `.py` 结尾**会走「按文件路径 `spec_from_file_location`」分支（`common.py:38-48`），是另一套语义。**统一用模块路径 `pkg.mod:func`**，别写 `./custom_tools/my_tool.py:my_tool`。
-- `yaml_path` 里**不能出现 `:`**——`_resolve_config_path`（`config.py:88-112`）见到非绝对路径带 `:` 会当成 `pkg:resource` 去 importlib.resources 里找。
+- `binding` 里**含 `os.sep` 或以 `.py` 结尾**会走「按文件路径 `spec_from_file_location`」那条分支，是另一套语义。**统一用模块路径 `pkg.mod:func`**，别写 `./custom_tools/my_tool.py:my_tool`。
+- `yaml_path` 里**不能出现 `:`**——框架见到非绝对路径带 `:` 会当成 `pkg:resource` 去 importlib.resources 里找。
 
 ---
 
@@ -454,7 +422,7 @@ async def my_async_tool(query: str, agent_state=None) -> dict:
     return {"content": r.text}
 ```
 
-分流规则（`nexau/archs/main_sub/execution/executor.py:2003-2020`、`:2085`）：
+分流规则：
 
 | 实现 | 执行方式 | 含义 |
 |---|---|---|
@@ -518,11 +486,11 @@ if res.status != SandboxStatus.SUCCESS:
 
   | | `write_file(bytes)` | `read_file` |
   |---|---|---|
-  | `LocalSandbox`（本地 `nexau` CLI 调试） | **必须 `binary=True`**：`binary=False` 会走 `content.decode(encoding)`（`nexau/archs/sandbox/local_sandbox.py:855-860`），非 UTF-8 字节 → `SandboxStatus.ERROR` | 必须 `binary=True`，否则解码失败 → ERROR |
-  | `E2BSandbox`（**NAC 线上实际走这条**） | `binary` **被忽略**，bytes 原样透传给 `_filesystem.write`（`e2b_sandbox.py:1321`），带不带都能写对 | **认 `binary`**：`binary=False` 时 `raw.decode(encoding)`（`e2b_sandbox.py:1246-1249`），二进制 → `UnicodeDecodeError` → ERROR（`:1262-1270`） |
+  | `LocalSandbox`（本地 `nexau` CLI 调试） | **必须 `binary=True`**：`binary=False` 会按 `encoding` 解码内容，非 UTF-8 字节 → `SandboxStatus.ERROR` | 必须 `binary=True`，否则解码失败 → ERROR |
+  | `E2BSandbox`（**NAC 线上实际走这条**） | `binary` **被忽略**，bytes 原样透传给底层文件系统写入，带不带都能写对 | **认 `binary`**：`binary=False` 时会按 `encoding` 解码，二进制 → `UnicodeDecodeError` → ERROR |
 
   两边都是**响亮报错**（返回 `status=ERROR` + `error` 文本），不是静默损坏。⚠️ 反过来也要注意：**「本地 LocalSandbox 跑通」不等于线上跑通，反之亦然**——写路径上 E2B 比 LocalSandbox 宽松，本地漏写 `binary=True` 会先炸；读路径两边一致。
-- 🚫 **不要用 `base64` 中转**。历史上 sandboxd 确实有一个「写二进制被 UTF-8 round-trip 破坏」的 bug（旧实现 `String::from_utf8_lossy` 手写切 multipart），**已修复**（ 改用 `multer::Multipart` 流式 `field.chunk()` 原样落盘），并留有 Rust 单测 + e2e 双回归守卫。现在 base64 中转只徒增两次落盘和一次 shell 往返。
+- 🚫 **不要用 `base64` 中转**。历史上沙箱侧确实有过一个「写二进制被 UTF-8 round-trip 破坏」的 bug，**已修复**（现在是流式原样落盘），并留有单测 + e2e 双回归守卫。现在 base64 中转只徒增两次落盘和一次 shell 往返。
 - 可选的廉价校验（值得留）：写完 `sandbox.execute_shell(f"wc -c < {path}", timeout=60_000)` 比对字节数，或比 sha256。
 
 ---

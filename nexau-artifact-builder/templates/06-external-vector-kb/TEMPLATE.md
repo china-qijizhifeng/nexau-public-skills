@@ -112,7 +112,7 @@
 | 未改动 | `nexau.json` 的 `excluded` 字段原样保留 | 平台**完全不解析** `excluded`，它只是打包端约定。因为无害且是既有约定，逐字保留；只在此说明「别以为平台会按它排除文件」。 |
 | 未改动 | `tool_call_mode: structured` | 原版就是合法值（合法值只有 `xml` / `structured`），无需改。 |
 | 未改动 | `read_file` / `search_file_content` / `run_shell_command` 三个 tool.yaml 的 `additionalProperties: false` | 这三个是内置工具、**没有 extra_kwargs**，只有框架注入参数（会被剔除），`additionalProperties: false` 可以安全保留。 |
-| 未改动 | 中间件 import 路径、`threshold: 0.6`、`max_iterations: 50`、`max_context_tokens: 128000`、全部 Python 逻辑 | 已对源码核实正确 / 属业务调参。 |
+| 未改动 | 中间件 import 路径、`threshold: 0.6`、`max_iterations: 50`、`max_context_tokens: 128000`、全部 Python 逻辑 | 已实测可加载、取值合法 / 属业务调参。 |
 | 裁剪情况 | **无裁剪**——本模板与 cookbook 原目录逐文件一致（除上述修正） | 完整原版见 `nexau-cookbook/MAP 知识库问答/MAP 知识库问答/`，配套 tutorial 见同级 `tutorial-map-vector-kb.md`。 |
 
 ## 延伸

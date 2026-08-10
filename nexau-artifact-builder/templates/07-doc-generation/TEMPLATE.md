@@ -155,7 +155,7 @@ Agent 直接 `dotnet build` 会踩 **CS8802**（`templates/` 下多个 `.cs` 都
 
 ## 已知的坑
 
-⚠️ **1. `dotnet restore` 需要沙箱能访问 NuGet**。沙箱镜像预装了 .NET SDK 8.0（`docker/Dockerfile.sandbox-aio` 里明确写着 "compile & run C# OpenXML code for 红头文件 docx generation"）和 LibreOffice，但 **`DocumentFormat.OpenXml 3.2.0` 没有预置 NuGet 缓存**，首次 `render` 会实时 restore。出网被 NFW 拦或纯离线环境 → 编译失败。修法：放通 NuGet 出网 / 预置离线包 / 或把编译好的 `templates/bin/` 一起打进制品（注意 100 MiB 上限）。
+⚠️ **1. `dotnet restore` 需要沙箱能访问 NuGet**。沙箱镜像预装了 .NET SDK 8.0（就是为了在沙箱里编译运行 C# OpenXML 代码生成红头文件 docx）和 LibreOffice，但 **`DocumentFormat.OpenXml 3.2.0` 没有预置 NuGet 缓存**，首次 `render` 会实时 restore。出网被 NFW 拦或纯离线环境 → 编译失败。修法：放通 NuGet 出网 / 预置离线包 / 或把编译好的 `templates/bin/` 一起打进制品（注意 100 MiB 上限）。
 
 ⚠️ **2. `set -euo pipefail` × `find`——本案例第 5 轮才挖到的真根因**。`bin/` 不存在时 `find` 返回 exit 1 → `pipefail` 让整条管道 1 → `set -e` 杀脚本 → 编译逻辑根本没跑到 → Agent 只看到「exit 1 无输出」。**7 处 `find` 全部要 `|| true`**。你新增任何 `find` / `grep` 之类"空结果是合法的"命令时，同样要加。
 
@@ -167,7 +167,7 @@ Agent 直接 `dotnet build` 会踩 **CS8802**（`templates/` 下多个 `.cs` 都
 
   两点容易踩：
   - 索引文件名一律 `INDEX.md` —— `SKILL.md` 是 skill 入口专用名，`references/` 下是知识库层级不是 skill，不该占用它。这些索引**不需要 frontmatter**（它们是目录导航，不是 skill 入口）。
-    ⚠️ 校验器的规则文件当前把 `index_file` 配成了 `SKILL.md`（平台缺陷；散文规范 `artifact-hard-rules.md:156` 同样禁止 references 内用 `SKILL.md`，只是它推荐小写 `index.md`），所以用 `INDEX.md` 会被它误报 `index_missing` / `directory_index_missing` —— 见 `../../references/artifact-spec-checklist.md` §8。
+    ⚠️ 校验器的规则文件当前把 `index_file` 配成了 `SKILL.md`（平台缺陷；平台自己的散文规范 `artifact-hard-rules.md` 同样禁止 references 内用 `SKILL.md`，只是它推荐小写 `index.md`），所以用 `INDEX.md` 会被它误报 `index_missing` / `directory_index_missing` —— 见 `../../references/artifact-spec-checklist.md` §8。
   - 索引里出现的**行内代码和链接会被校验器当路径检查**：必须真实存在、且解析后仍落在本 skill 的 `references/` 目录内。所以别在索引里写绝对路径（如 `/home/user/.skills/...`，会判 `path_escapes_skill_root`）、也别用反引号提上级目录的文件（会判 `path_missing` / `path_outside_references_dir`）。
 
 ⚠️ **6. `pdf_to_md.py` 里 `httpx.HTTPTransport(verify=False)`**——关掉了 TLS 校验。是为了穿沙箱 MITM 代理，但等于放弃证书验证；对安全敏感的部署要评估。
@@ -186,11 +186,11 @@ Agent 直接 `dotnet build` 会踩 **CS8802**（`templates/` 下多个 `.cs` 都
 | `agent.yaml` | 新增 3 行注释：说明上述覆盖 + **本地裸跑 NexAU（不经 NAC）时需自行补 base_url / api_key** | 删字段后必须留下逃生说明，否则拿去本地跑不通 |
 | `systemprompt.md` 规则 1 | 新增「部署后 skills 根目录位于 `/home/user/.skills/`……但取值仍以 LoadSkill 返回的 `<SkillFolder>` 为准」；同时把 `.skills/...` 从"禁止猜测路径"的示例里移除（**规则 1 和「🚫 禁止操作」两处都要改**） | 平台静态校验器 `required_systemprompt_patterns` 强制要求 systemprompt 显式写出这个根目录；原文把 `.skills/` 列为反例会与该要求自相矛盾 |
 | `systemprompt.md` 故障排除表 | `加 2>&1 \| tail -50 看详细错误` → `看 2>&1 的完整输出（不要接 \| tail）` | 与同一份文件里的禁令「禁止在 build render 后加管道」直接冲突，也违反 tutorial 自己总结的教训 #2；照原样 Agent 会被引导去吞掉退出码 |
-| `systemprompt.md` 第三步 | 改成两档：消息里已给出 `full_text.md` / `page_{N}.md` 路径就直接 `read_file`，只有拿到未转换的 `.pdf` 才回退跑 `pdf_to_md.py` | Playground / SimpleChat 上传 PDF 后平台会自动 OCR 并把转好的 Markdown 路径拼进 user message（`frontend/src/pages/Playground/messageHelpers.ts:242-270`，产物目录 `/home/user/uploads/converted/{file_id}/`）。原文让 Agent 无条件再转一遍是重复劳动，还平白把 `OCR_API_KEY` 变成主路径的硬依赖 |
+| `systemprompt.md` 第三步 | 改成两档：消息里已给出 `full_text.md` / `page_{N}.md` 路径就直接 `read_file`，只有拿到未转换的 `.pdf` 才回退跑 `pdf_to_md.py` | Playground / SimpleChat 上传 PDF 后平台会自动 OCR 并把转好的 Markdown 路径拼进 user message（产物目录 `/home/user/uploads/converted/{file_id}/`）。原文让 Agent 无条件再转一遍是重复劳动，还平白把 `OCR_API_KEY` 变成主路径的硬依赖 |
 | `systemprompt.md` 故障排除表 | 新增一行：首次 render 卡在 `dotnet restore` / NuGet 失败 → 出网问题 | 沙箱不预置 NuGet 包，这是真机上最可能出现且原表没覆盖的失败模式 |
 | `systemprompt.md` 故障排除表 | `PDF 解析返回 API Key required / 联系管理员注入环境变量` → 改成脚本真实报错串 + 明确「必须配在**沙箱环境**（sandbox scope）」 | 原文的错误串与脚本实际抛的 `OCR_API_KEY environment variable is required for PDF OCR` 对不上；且"注入环境变量"没说作用域，配到 runtime scope 是最常见的踩坑 |
 | `skills/docx-report/SKILL.md` | 同上两处：去掉 `\| tail -50` 建议；新增 NuGet 出网失败一行 | 同上 |
-| `skills/govdoc-writing/SKILL.md` | 「使用方法」第 2/3/4 步的路径补上 `references/` 前缀（原文写成 `guidelines/format-standard.md`） | 磁盘上没有顶层 `guidelines/` 目录，真实路径是 `references/guidelines/…`；同文件 :44-46 的导航表本来就是对的，属「改了表没改正文」。⚠️ 校验器抓不到这类错：`artifact_static_validator.py:763` 扫 skill 根 SKILL.md 时只校验含 `references/` 的路径，**不带该前缀的相对路径是校验盲区** |
+| `skills/govdoc-writing/SKILL.md` | 「使用方法」第 2/3/4 步的路径补上 `references/` 前缀（原文写成 `guidelines/format-standard.md`） | 磁盘上没有顶层 `guidelines/` 目录，真实路径是 `references/guidelines/…`；同文件 :44-46 的导航表本来就是对的，属「改了表没改正文」。⚠️ 校验器抓不到这类错：它扫 skill 根 SKILL.md 时只校验含 `references/` 的路径，**不带该前缀的相对路径是校验盲区** |
 | `skills/pdf_to_md/SKILL.md` | `OCR_API_KEY（由平台注入）` → 写明 sandbox scope + 配置位置；依赖段补一句「PyMuPDF / httpx 已预装在沙箱 `/opt/sandbox-python` venv」 | "由平台注入"是错的（平台不会自动给你注 OCR key）；依赖可用性写清楚可以避免 Agent 去 pip install |
 | `skills/docx-report/references/INDEX.md` | **新增**：references 根索引，列出两份法规原文各自的内容与查阅时机，并给出「查排版 vs 查文种」的分工判据 | 校验器 `require_root_index_when_nonempty` 强制非空 references/ 必须有根索引，缺则报 `skills.references.index_missing` |
 | `skills/docx-report/SKILL.md` | **新增**「references/ 目录导航」一节（两份法规原文的内容 / 查阅时机 + 指向 `references/INDEX.md`） | 只放 INDEX.md 不够：框架的 `Skill.from_folder` 只自动加载 skill 根 `SKILL.md`，references/ 全靠 SKILL.md 明确导航才会被 Agent 读到。原版 docx-report/SKILL.md 全文不提 references，那两份法规是**没有任何入口的孤儿**（对照组 `govdoc-writing/SKILL.md` 有完整导航段）。补上后才真正接进 Agentic Search 路径 |

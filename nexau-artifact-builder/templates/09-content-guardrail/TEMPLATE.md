@@ -146,16 +146,16 @@ params:
 
 | 文件 | 改了什么 | 为什么 |
 |---|---|---|
-| `agent.yaml` | `middlewares.params` 新增 `input_action: terminate` / `output_action: terminate` | **当前 pinned commit 的默认值是 `mask`，不是 `terminate`**（`sensitive_word.py:404-405`）。不写就退化成脱敏继续，教程描述的三条验收用例全部不符 |
-| `agent.yaml` | `llm_config` 删掉 `base_url` / `api_key` / `api_type` / `stream`，只留 `model` + `temperature`，并加注释说明本地裸跑需自补 | 这四个字段在 NAC 上被平台无条件覆盖（`server.py:1956-1957` / `1496-1510`；流式路径 `transports/base.py:134-135` 强制 `stream=True`），写了是噪声 |
-| `agent.yaml` | `tools` 条目由内置 `read_file` 改为自定义 `read_material`（binding `custom_tools.read_material:read_material`） | 内置 `read_file` 通过 `get_sandbox(agent_state)` 走**沙箱**文件系统（`file_tools/read_file.py:232-238`），而 NAC 的沙箱 pod 只挂 emptyDir `/home/user`、**不含制品目录 `/agent`**（runtime 侧 `upload_assets=[]`，只上传 skills）。原写法在 NAC 上读不到 `materials/`，「工具结果拦截」这条主线演示不出来 |
+| `agent.yaml` | `middlewares.params` 新增 `input_action: terminate` / `output_action: terminate` | **该中间件当前的默认值是 `mask`，不是 `terminate`**。不写就退化成脱敏继续，教程描述的三条验收用例全部不符 |
+| `agent.yaml` | `llm_config` 删掉 `base_url` / `api_key` / `api_type` / `stream`，只留 `model` + `temperature`，并加注释说明本地裸跑需自补 | 这四个字段在 NAC 上被平台无条件覆盖（`base_url` / `api_key` 换成平台注入值，`api_type` 按模型卡派生，流式路径强制 `stream=True`），写了是噪声 |
+| `agent.yaml` | `tools` 条目由内置 `read_file` 改为自定义 `read_material`（binding `custom_tools.read_material:read_material`） | 内置 `read_file` 读的是**沙箱**文件系统，而 NAC 的沙箱 pod 只挂 emptyDir `/home/user`、**不含制品目录 `/agent`**（runtime 侧只往沙箱上传 skills，制品其余部分不上传）。原写法在 NAC 上读不到 `materials/`，「工具结果拦截」这条主线演示不出来 |
 | `agent.yaml` | 中间件注释里的「见教程设计要点 3」改为「见 TEMPLATE.md」 | 教程不随模板分发 |
 | `custom_tools/read_material.py` | **新增** | 上一条的实现：跑在 runtime 进程，用 `Path(__file__).resolve().parent.parent / "materials"` 定位制品静态资源，带 `../` 逃逸防护和「文件不存在时返回可读清单」的自纠正返回 |
 | `tools/read_material.tool.yaml` | **新增**（替换 `tools/read_file.tool.yaml`，已删除） | 配套 schema。保留 `additionalProperties: false`（本工具无 `extra_kwargs`，安全），并写了一行注释提醒「一旦加 extra_kwargs 就必须删掉这行」 |
 | `systemprompt.md` | 材料清单由 `/agent/materials/xxx.txt` 改为文件名 `xxx.txt`，`read_file` 改为 `read_material` | 与新工具契约一致（新工具只吃文件名，不吃路径） |
 | `materials/网民留言-20260601.txt` | 末尾说明里的 `read_file` → `read_material` | 同上 |
 | `lexicon/README.md` | 末尾指向的「仓库内教程」改为指向 `TEMPLATE.md` | 教程不随模板分发 |
-| `nexau.json` | **未改** | `agents` 映射到根目录 `agent.yaml` 是合法格式（`cli.py:231-251`）；`excluded` 平台不解析、留着无害（只是打包端约定，别当成「平台会按它排除文件」） |
+| `nexau.json` | **未改** | `agents` 映射到根目录 `agent.yaml` 是合法格式；`excluded` 平台不解析、留着无害（只是打包端约定，别当成「平台会按它排除文件」） |
 | `lexicon/*.txt`、`tool_call_mode: structured` | **未改** | 词库逐字保留；`tool_call_mode` 原版已是合法值 `structured`（合法值只有 `xml` / `structured`） |
 | `agent.yaml` | `system_prompt_type` 由 `file` 改为 `jinja` | 平台制品静态校验把 `system_prompt_type` 钉死为 `jinja`（`builder-static-rules.json.required_agent_fields`），`file` 直接报 `agent.field.invalid`。本模板的 `systemprompt.md` 不含任何 `{{ }}` / `{% %}`，按 jinja 渲染结果与 `file` 逐字相同 |
 | `agent.yaml` | 新增 `skills: []`（带一行注释） | `skills` 是必需的列表字段（`required_list_fields`），缺键报 `skills.invalid_type`。本模板不挂 skill，显式写空列表 |
@@ -166,7 +166,7 @@ params:
 另删除了 `custom_tools/__pycache__/`（本地跑出来的 `.pyc` 产物）—— `nexau.json` 的 `excluded` 里虽写了 `__pycache__/`，但**平台完全不解析 `excluded`**（那只是打包端约定），整目录打包会把它一起带进制品。
 
 **教程里已过时、本文已纠正的说法**：
-- 「SensitiveWordMiddleware 尚未合入主线」——**已过时**。该中间件在当前 pinned commit 的 `nexau/archs/main_sub/execution/middleware/sensitive_word.py` 里，import 路径可直接用。
+- 「SensitiveWordMiddleware 尚未合入主线」——**已过时**。该中间件已随 SDK 分发，import 路径 `nexau.archs.main_sub.execution.middleware.sensitive_word:SensitiveWordMiddleware` 可直接用。
 - 「什么都不传时使用包内自带的 3 词演示词库」——**已过时**，现在不传任何词库来源直接 `ValueError`。
 - 「路径写错不会报错、静默加载 0 词」——**已过时**，`lexicon_dir` 不是目录时抛 `FileNotFoundError`。静默 0 词只发生在「目录存在但没有 `*.txt`」。
 - 日志文案：命中日志实际是 `[SensitiveWordMiddleware] HIT source=... action=... categories=... hits=[...]`（不是 `BLOCKED`）；加载日志是 `loaded N words; block_input=.../... block_output=.../... case_sensitive=...`。

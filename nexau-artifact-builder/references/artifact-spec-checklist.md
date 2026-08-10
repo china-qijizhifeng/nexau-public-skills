@@ -5,12 +5,12 @@
 > **什么时候读**：生成任何新制品之前（当作 checklist 用）；制品被判不合规时；
 > 拿不准「这么写到底行不行」时。
 >
-> 事实源（`builtin-agents/Agent4Agent/skills/` 下）：
-> - `nexau-artifact-rules/references/builder-static-rules.json` —— 主规则数据
-> - `nexau-artifact-rules/references/allowed-middlewares.json` —— **中间件白名单**（§9）
-> - `nexau-artifact-rules/references/builtin-tool-bindings.json` —— **canonical binding 映射**（§6.4）
-> - `nexau-artifact-rules/references/artifact-hard-rules.md` —— 平台的人工可读总表（⚠️ 见下方「已知自相矛盾」）
-> - `artifact-verifier/scripts/artifact_static_validator.py` —— **实现（判定以它为准）**
+> 事实源是平台自带的那套制品规则文件与校验器实现（随平台内置的 Agent4Agent 分发，不在你的制品里）：
+> - `builder-static-rules.json` —— 主规则数据
+> - `allowed-middlewares.json` —— **中间件白名单**（§9）
+> - `builtin-tool-bindings.json` —— **canonical binding 映射**（§6.4）
+> - `artifact-hard-rules.md` —— 平台的人工可读总表（⚠️ 见下方「已知自相矛盾」）
+> - 校验器脚本本身 —— **实现（判定以它为准）**
 >
 > ### 🚨 已知自相矛盾：平台的散文规范与机器规则打架
 >
@@ -19,18 +19,21 @@
 >
 > | 议题 | 散文 `artifact-hard-rules.md` 说 | 机器规则 + 校验器实现说 | 本 skill 采信 |
 > |---|---|---|---|
-> | `references/` 索引文件名 | :156「**禁止**在 `references/` 或其子目录内生成 `SKILL.md`；子目录索引用 `index.md` / `overview.md`」 | `builder-static-rules.json:56` `index_file: "SKILL.md"` + 校验器 `:691,719,733-742` 强制 `references/SKILL.md` 及每个非空子目录的 `SKILL.md` | ✅ **散文对，校验器配置错** → 用 `INDEX.md`，见 §8 |
-> | `model` 写裸名 | :29「裸名会**静默回落**项目默认」 | **校验器**：判 error `agent.llm_config.model.bare_name`（`artifact_static_validator.py:315-323`），但它的报错文案跟着散文写「silently falls back」<br>**运行期**：sidecar `proxy_routers.rs:1177-1187` `if provider_prefix.is_none() { … Reject }` → 每次 chat **422** | ✅ **运行期代码对，散文与校验器文案都错** → 裸名会 422、不回落（`llm-config.md` §3.2）。三方在「别写裸名」这个结论上一致，只有「后果是什么」有分歧 |
+> | `references/` 索引文件名 | 「**禁止**在 `references/` 或其子目录内生成 `SKILL.md`；子目录索引用 `index.md` / `overview.md`」 | 规则文件把 `index_file` 配成了 `SKILL.md`，校验器据此强制要求 `references/SKILL.md` 及每个非空子目录的 `SKILL.md` | ✅ **散文对，校验器配置错** → 用 `INDEX.md`，见 §8 |
+> | `model` 写裸名 | 「裸名会**静默回落**项目默认」 | **校验器**：判 error `agent.llm_config.model.bare_name`，但它的报错文案跟着散文写「silently falls back」<br>**运行期**：sidecar 发现模型名没有 `provider_name/` 前缀就直接拒绝 → 每次 chat **422** | ✅ **运行期行为对，散文与校验器文案都错** → 裸名会 422、不回落（`llm-config.md` §3.2）。三方在「别写裸名」这个结论上一致，只有「后果是什么」有分歧 |
 >
-> **裁决方法**：第 2 条有**运行期代码**作证（sidecar 真的会 Reject），代码 > 任何声明；
+> **裁决方法**：第 2 条有**运行期行为**作证（sidecar 真的会拒），实测行为 > 任何声明；
 > 第 1 条双方都只是「规范声明」、没有运行期行为可判，此时按**语义正确性**裁决（见 §8），
 > 而 `index_file` 恰好只是一个可改的**配置值**，不是硬编码逻辑。
 >
 > ### 怎么自己跑这个校验器
 >
+> 校验器与规则文件随平台内置的 Agent4Agent 分发，不在你的制品里。**手上有这套脚本时**
+> （`S` = 校验器脚本目录，`R` = 规则文件目录）：
+>
 > ```bash
-> S=<repo>/builtin-agents/Agent4Agent/skills/artifact-verifier/scripts
-> R=<repo>/builtin-agents/Agent4Agent/skills/nexau-artifact-rules/references
+> S=<校验器脚本目录>
+> R=<规则文件目录>
 > PYTHONPATH=$S python3 $S/validate_artifact_static.py \
 >   --artifact-root <你的制品目录> --rules-root $R 2>/dev/null
 > ```
@@ -48,14 +51,13 @@
 |---|---|---|---|
 | **① 上传硬门** | Backend | HTTP 400/413，制品根本进不来 | `nexau-json-and-packaging.md` §7 |
 | **② 框架能不能加载** | NexAU `AgentConfigSchema` / builder | 加载期 `ConfigError`，pod 起不来 | `agent-yaml-fields.md` §6 |
-| **③ 官方制品规范** | A4A 制品静态校验器（本文） | **不是上传硬门**——上传照样过、也能跑，但不符合官方规范；由 Agent Debugger / A4A 检查制品时报 error | 本文 |
+| **③ 官方制品规范** | 平台静态校验器（本文） | **不是上传硬门**——上传照样过、也能跑，但不符合官方规范；由 Agent Debugger / A4A 检查制品时报 error | 本文 |
 
 ⚠️ **第 ③ 层比第 ② 层严格**：好几条在框架层完全合法的写法（`system_prompt_type: file`、
 `skills` 用对象条目、省略 `binding`、写 `tracers`），静态校验器都判 **error**。
 **要产出「官方规范制品」就按本文来。**
 
-> 校验器是 A4A（Agent4Agent）的一个 skill（`builtin-agents/Agent4Agent/agent.yaml:55`），
-> Backend 上传链路**不调用**它（已在平台后端代码库确认零命中）。
+> 校验器是 A4A（Agent4Agent）的一个 skill，**不在上传链路上**——制品上传时平台不会调用它。
 
 ### 0.1 ② 层也能在上传前自查（别只等 pod 起不来）
 
@@ -68,7 +70,7 @@ cd <artifact-root> && LLM_MODEL=x LLM_BASE_URL=http://x/v1 LLM_API_KEY=sk-x \
   c=AgentConfig.from_yaml(Path('agent.yaml')); print('OK', c.name, len(c.tools))"
 ```
 
-- ⚠️ **必须传 `Path` 不能传 `str`** —— 传字符串会 `AttributeError: 'str' object has no attribute 'parent'`（`config/config.py:223` 用 `config_path.parent` 作相对路径基准）。
+- ⚠️ **必须传 `Path` 不能传 `str`** —— 框架拿 `config_path.parent` 作相对路径基准，传字符串会 `AttributeError: 'str' object has no attribute 'parent'`。
 - ⚠️ 用 `AgentConfigSchema.from_yaml` 是**弱版本**：它只做 pydantic 结构校验 + `${env}` 插值，**不解析任何相对路径**，`yaml_path` 写错它照样返回 OK。要预检就用上面的 `AgentConfig.from_yaml`。
 
 它能抓：`${env.X}` 漏建（报出变量名，正好当变量清单对账）、`system_prompt` / `yaml_path` / `skills[]` / `sub_agents[].config_path` 的相对基准写错、`.tool.yaml` 结构错、binding 真实 import 失败（含自定义 binding）、middlewares 实例化参数错。
@@ -108,15 +110,14 @@ systemprompt.md
 
 | # | 逃逸形式 | 谁会抓到 | 典型踩法 |
 |---|---|---|---|
-| ① | **归档条目**路径含 `../` 或以 `/` 开头 | **上传 400**（`normalize_artifact_path`） | 在父目录 `tar -czf x.tar.gz my-agent/`（多包一层还带路径前缀）；用绝对路径打包 |
-| ② | **归档里有软链接** | **上传 400**：`unsupported tar entry <path>: only regular files and directories are allowed`（zip 走 `validate_zip_entry` 查 unix mode 文件类型位） | 为了"共用"把 `skills/common` 软链到模板库或另一个项目目录；`ln -s ~/kb data` |
-| ③ | **agent.yaml / nexau.json 声明的路径**解析后逃出制品根 | **静态校验器**四个 error：`nexau_json.agent_yaml.path_escapes_artifact_root`(:248) / `agent.system_prompt.path_escapes_artifact_root`(:292) / `tool.yaml_path.path_escapes_artifact_root`(:447) / `skills.entry.path_escapes_artifact_root`(:643)。⚠️ 上传门只兜住其中**第一条**：`nexau.json.agents` 声明的 yaml 在归档里找不到 → 上传 400 `agent yaml files declared in nexau.json not found or empty in artifact`（`artifacts.rs:202-271`，见 `nexau-json-and-packaging.md` §2.0）。**`agent.yaml` 内部那三条（`system_prompt` / `tools[].yaml_path` / `skills[]`）上传期完全不读，只有校验器管** | `system_prompt: ../shared/systemprompt.md`；`skills: [/Users/me/skills/labor_law]`；从模板库复制 `agent.yaml` 时留着指回模板库的 `yaml_path` |
+| ① | **归档条目**路径含 `../` 或以 `/` 开头 | **上传 400**（上传期路径规范化就拒） | 在父目录 `tar -czf x.tar.gz my-agent/`（多包一层还带路径前缀）；用绝对路径打包 |
+| ② | **归档里有软链接** | **上传 400**：`unsupported tar entry <path>: only regular files and directories are allowed`（zip 走 unix mode 的文件类型位检查） | 为了"共用"把 `skills/common` 软链到模板库或另一个项目目录；`ln -s ~/kb data` |
+| ③ | **agent.yaml / nexau.json 声明的路径**解析后逃出制品根 | **静态校验器**四个 error：`nexau_json.agent_yaml.path_escapes_artifact_root` / `agent.system_prompt.path_escapes_artifact_root` / `tool.yaml_path.path_escapes_artifact_root` / `skills.entry.path_escapes_artifact_root`。⚠️ 上传门只兜住其中**第一条**：`nexau.json.agents` 声明的 yaml 在归档里找不到 → 上传 400 `agent yaml files declared in nexau.json not found or empty in artifact`（见 `nexau-json-and-packaging.md` §2.0）。**`agent.yaml` 内部那三条（`system_prompt` / `tools[].yaml_path` / `skills[]`）上传期完全不读，只有校验器管** | `system_prompt: ../shared/systemprompt.md`；`skills: [/Users/me/skills/labor_law]`；从模板库复制 `agent.yaml` 时留着指回模板库的 `yaml_path` |
 | ④ | **文案指令**：prompt / SKILL.md / 索引 / 工具描述里让模型去读制品外的路径 | 🚫 **没有任何静态关卡**（详见下方） | systemprompt 写「知识库在 `/Users/me/kb/`，需要时用 `read_file` 读」；SKILL.md 写「完整表结构见 `~/work/schema.md`」；索引里留着生成流程用的 `/tmp/run-xxxx/` 中间产物路径 |
 
-**为什么 ④ 静态抓不到**（读码确认，`artifact_static_validator.py:744-764`）：
-校验器只扫**两类文档**——每个 skill 根目录的 `SKILL.md`，以及 `references/` 下的索引文件；
-**`systemprompt.md` 一个字都不扫**。而且扫 `SKILL.md` 时还有一道过滤：目标串里不含 `references/`
-且不以 `../` / `./references/` 开头就直接 `continue`（:763）。所以 `SKILL.md` 里写
+**为什么 ④ 静态抓不到**：校验器只扫**两类文档**——每个 skill 根目录的 `SKILL.md`，
+以及 `references/` 下的索引文件；**`systemprompt.md` 一个字都不扫**。而且扫 `SKILL.md` 时还有一道
+过滤：目标串里不含 `references/` 且不以 `../` / `./references/` 开头就直接跳过。所以 `SKILL.md` 里写
 `` `/Users/me/kb/data.md` `` 是零告警通过的。
 
 同理，下面这几处的路径**也没人扫**，只能自己核：
@@ -125,7 +126,6 @@ systemprompt.md
   写死 `open("/Users/me/data/x.json")` 照样 `pass: true`
 - `middlewares[].params` 里的路径（如 `lexicon_dir`）—— 校验器只查白名单与参数名（§9）
 - `sub_agents[].config_path` / `mcp_servers` 的启动命令 —— **校验器对这两个键零覆盖**
-  （已 grep 确认 `sub_agent` / `mcp_server` 在校验器里 0 命中）
 
 **④ 的运行期表现最阴**：它不像 ③ 那样在加载期 `ConfigError` 把 pod 打挂，而是等模型真去读的时候
 `read_file` 返回「文件不存在」，模型多半改口凭记忆现编——**回答看着正常、内容是幻觉**，
@@ -143,9 +143,9 @@ systemprompt.md
 ### 1.2 多个 skill 要同一套资料：抽成共享 skill，别互相 cross-link
 
 **硬规则**：一个 skill 的索引 / SKILL.md **不得指向另一个 skill 的 `references/`**，
-报 `skills.references.private_external_reference`（error，`artifact_static_validator.py:791-798`，
-由 §8 表里的 `forbid_cross_skill_private_references` 开关控制）。
-判定逻辑很直白（`:834-838`）：目标落在 `<制品根>/skills/` 下、**不在**当前 skill 目录内、
+报 `skills.references.private_external_reference`（error，由 §8 表里的
+`forbid_cross_skill_private_references` 开关控制）。
+判定逻辑很直白：目标落在 `<制品根>/skills/` 下、**不在**当前 skill 目录内、
 且相对 `skills/` 的路径片段里出现 `references` —— 三条同时成立就判 error。
 
 **推荐做法（装配约定，不是 schema 硬约束）**：同一套 source set 被两个以上 skill 需要时，抽成一个独立的共享 skill。三步——
@@ -177,7 +177,7 @@ systemprompt.md
 ### 1.3 🚫 原始 PDF 不得进制品
 
 用户上传的 PDF 在进制品前**必须先转成 Markdown / 文本 / 结构化结果**，
-原始 `.pdf` 不放进生成的制品，并要记录来源与用途（`artifact-hard-rules.md` §6）。
+原始 `.pdf` 不放进生成的制品，并要记录来源与用途（平台散文规范 `artifact-hard-rules.md` §6）。
 
 > 顺带一个框架事实：内置工具**读不了 PDF**——`read_file` 把 `.pdf`/Office 列入
 > `UNSUPPORTED_BINARY_EXTENSIONS` 直接返回 `BINARY_FILE` 错误，`read_visual_file` 只认图片/视频。
@@ -202,14 +202,14 @@ systemprompt.md
 | 字段 | 为什么 |
 |------|--------|
 | `sandbox_config` | 平台注入是「你没写才注入」，写了平台就不注入 → 沙箱必炸。**框架层也确实会坏** |
-| `tracers` | ⚠️ **注意差异**：运行期平台 tracer 与制品自带 tracers 其实是**合并**的（`server.py:2172-2186`），功能上写了能用；但**官方规范判 error**。结论：**别写**，观测交给平台 |
+| `tracers` | ⚠️ **注意差异**：运行期平台 tracer 与制品自带 tracers 其实是**合并**的（平台侧实测行为），功能上写了能用；但**官方规范判 error**。结论：**别写**，观测交给平台 |
 
-`llm_config` 另有**两条**专门规则（都是 error，实现都在 `artifact_static_validator.py:308-331`）：
+`llm_config` 另有**两条**专门规则（都是 error）：
 
 | 报错码 | 触发条件 | 豁免 |
 |---|---|---|
-| `agent.llm_config.model.bare_name` | `model` 是字符串且不含 `/`（没有 `provider/` 前缀） | 值里含 `${`（即 `${env.LLM_MODEL}` 这类占位）时**不判**（:315） |
-| `agent.llm_config.api_key.literal` | `api_key` 是非空字符串 | 同样是含 `${` 就豁免（:325） |
+| `agent.llm_config.model.bare_name` | `model` 是字符串且不含 `/`（没有 `provider/` 前缀） | 值里含 `${`（即 `${env.LLM_MODEL}` 这类占位）时**不判** |
+| `agent.llm_config.api_key.literal` | `api_key` 是非空字符串 | 同样是含 `${` 就豁免 |
 
 两条都只扫**顶层** `agent_yaml.get("llm_config")`，中间件 params / `fallback_providers` 里的同名字段扫不到。
 机理与运行期后果见 `llm-config.md` §3.2 / §7.1，以及本文开头「已知自相矛盾」第 2 行。
@@ -285,9 +285,9 @@ save_memory           nexau.archs.tool.builtin.session_tools:save_memory
 ⚠️ 左列是 `agent.yaml` 里 `tools[].name` 应写的值（canonical 表的 key）。注意 `Glob` 大写 G，
 而其 binding 的函数名是小写 `glob`。
 
-⚠️ **`.tool.yaml` 内部的 `name` 必须与 `agent.yaml` 的 `name` 一致**，否则 `tool.name.mismatch`（error，
-`artifact_static_validator.py:496-502`）。而 canonical 表按 `agent.yaml` 的 `name` 查——**写小写
-`glob` 会查不到表 → 该工具被当成自定义工具处理**（import 失败从 warning 升级成 error）。
+⚠️ **`.tool.yaml` 内部的 `name` 必须与 `agent.yaml` 的 `name` 一致**，否则 `tool.name.mismatch`（error）。
+而 canonical 表按 `agent.yaml` 的 `name` 查——**写小写 `glob` 会查不到表 → 该工具被当成自定义工具
+处理**（import 失败从 warning 升级成 error）。
 所以 `Glob` 这一个要两边都写大写。完整三组合实测对照见 `builtin-tools.md`。
 
 ### 6.1c 自定义工具的 binding 规则
@@ -298,8 +298,8 @@ save_memory           nexau.archs.tool.builtin.session_tools:save_memory
 - 想写成包路径（`custom_tools.pkg:review`），那个包的 `__init__.py` 必须显式 re-export
 - `.tool.yaml` 的 `name` 必须与 `agent.yaml.tools[].name` 一致
 - `yaml_path` 必须在制品根内，不得用 `../` 或绝对路径逃逸
-- **import 失败是 error**（`tool.binding.import_error`，`artifact_static_validator.py:557-562`），直接把制品判成 `pass: false` —— 与内置工具的 import 失败只报 warning（§6.1b）**不同**。import 成功后还会 `getattr(module, symbol)`，取不到报 `tool.binding.symbol_missing`
-- ⚠️ **这一遍 import 跑在你执行校验器的那台机器上**，不是 runtime 镜像里。自定义工具在**模块顶层** `import` 第三方依赖（`httpx` / `pymysql` / `dmPython` 等，**即使已经写进 `nexau.json` 的 `setup`**）时，本地缺包就会吃这条 error。两个解法：① 在装齐依赖的环境里跑校验器；② 把第三方依赖改成**函数内延迟 import**（`templates/05-native-driver-airgap/custom_tools/dameng_sql.py:290-292` 就是这么写的——它本意是先 preload 达梦动态库，顺带也躲开了这条误报）。stdlib-only 的工具不受影响（见 `templates/06-external-vector-kb/custom_tools/_map_client.py` 顶部注释）
+- **import 失败是 error**（`tool.binding.import_error`），直接把制品判成 `pass: false` —— 与内置工具的 import 失败只报 warning（§6.1b）**不同**。import 成功后还会 `getattr(module, symbol)`，取不到报 `tool.binding.symbol_missing`
+- ⚠️ **这一遍 import 跑在你执行校验器的那台机器上**，不是 runtime 镜像里。自定义工具在**模块顶层** `import` 第三方依赖（`httpx` / `pymysql` / `dmPython` 等，**即使已经写进 `nexau.json` 的 `setup`**）时，本地缺包就会吃这条 error。两个解法：① 在装齐依赖的环境里跑校验器；② 把第三方依赖改成**函数内延迟 import**（`templates/05-native-driver-airgap/custom_tools/dameng_sql.py` 就是这么写的——它本意是先 preload 达梦动态库，顺带也躲开了这条误报）。stdlib-only 的工具不受影响（见 `templates/06-external-vector-kb/custom_tools/_map_client.py` 顶部注释）
 
 ### 6.2 `.tool.yaml` 必填字段
 
@@ -315,8 +315,8 @@ disable_parallel, lazy, defer_loading, search_hint,
 template_override, builtin, binding
 ```
 
-⚠️ **框架侧 `ToolYamlSchema` 还有第 13 个字段 `formatter`**（`nexau/archs/tool/tool.py:232`），
-白名单**没有收录**它。写了会被判 `tool.yaml.unexpected_field`（error），
+⚠️ **框架侧 `ToolYamlSchema` 还有第 13 个字段 `formatter`**，白名单**没有收录**它。
+写了会被判 `tool.yaml.unexpected_field`（error），
 而且**报错文案会宣称「Tool YAML field is not supported by NexAU ToolYamlSchema: formatter」——那句是错的**
 （框架明明支持），别按它去翻框架源码。不写时框架自动回落 `markdown` formatter，绝大多数场景不需要它。
 
@@ -377,7 +377,7 @@ skills/my-domain/
 
 与 `skill-knowledge-organizer` skill 的产出**完全一致**（它产出的就是 `INDEX.md`，不用改名）。
 
-⚠️ 与平台散文规范只是**部分**一致，别夸大：`artifact-hard-rules.md:156` 原文是
+⚠️ 与平台散文规范只是**部分**一致，别夸大：`artifact-hard-rules.md` 原文是
 「禁止在 `references/` 或其子目录内生成 `SKILL.md`；子目录如需索引用 `index.md` / `overview.md`」——
 它在「**references 内不该出现 `SKILL.md`**」这一点上和我们同调，但推荐的具体拼写是小写 `index.md`。
 本 skill 取 `INDEX.md`（与 organizer 对齐、大写在文件列表里也更醒目）。**分歧只在拼写，不在原则。**
@@ -390,7 +390,7 @@ skills/my-domain/
 规则文件把索引名配成了 `SKILL.md`：
 
 ```jsonc
-// builder-static-rules.json:54-58
+// builder-static-rules.json 里的 skill_reference_rules 段
 "skill_reference_rules": {
   "references_dir": "references",
   "index_file": "SKILL.md",        // ← 这一行应为 "INDEX.md"
@@ -401,14 +401,13 @@ skills/my-domain/
 于是 `INDEX.md` 版会被判：1 条 `skills.references.index_missing` + 每个非空子目录 1 条
 `skills.references.directory_index_missing`。
 
-**这是配置值的问题，不是校验器逻辑的问题** —— 实现是
-`index_file_name = reference_rules.get("index_file", "SKILL.md")`（`artifact_static_validator.py:691`），
-完全由配置驱动。
+**这是配置值的问题，不是校验器逻辑的问题** —— 索引文件叫什么名字完全由规则文件里的
+`index_file` 驱动，校验器只是照着读，改这一个值就够了。
 
 **已实测**：把这一行改成 `"INDEX.md"` 后，`INDEX.md` 版的层级化知识库制品
 **0 error 通过校验**（用 `templates/01-agentic-rag` 的 `INDEX.md` 版验证）。
 
-> ⚠️ `builder-static-rules.json` 是 NAC 仓里**受控的平台规则文件**，要改得由平台维护者走 PR。
+> ⚠️ `builder-static-rules.json` 是**平台侧受控的规则文件**，要改得由平台维护者走变更流程。
 > **制品作者 / 生成 agent 不要为了让自己这一份制品过检就地编辑它** —— 那会静默改变所有使用者的
 > 校验口径，而且很难追溯。在平台修掉之前，把这 N+1 条 error 当**已知噪声**即可。
 
@@ -418,7 +417,7 @@ skills/my-domain/
 > 不能用「都是已知 error」一把放过。
 
 **若交付方硬要「校验器全绿」的截图**：可以把内层索引改名成 `SKILL.md`（实测索引类 error 归零）——
-但这会违反 `artifact-hard-rules.md:156` 的散文禁令，等于**换一头违规**，不是免费的绿灯。
+但这会违反 `artifact-hard-rules.md` 的散文禁令，等于**换一头违规**，不是免费的绿灯。
 两条路各违平台规范的一头，选哪条要跟交付方讲清楚，别当成「有个零成本合规解没告诉我」。
 
 ### 8.3 ⚠️ 索引正文里不要裸写反引号文件名

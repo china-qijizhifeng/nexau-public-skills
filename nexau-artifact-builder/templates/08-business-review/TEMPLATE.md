@@ -57,7 +57,7 @@
 | 1 | `nexau.json` : `agents` 的 key | 你的 agent 名（英文 snake_case），value 保持 `agent.yaml` |
 | 2 | `agent.yaml` : `name` | 与上面 key **逐字一致**的 agent 名（不一致平台静态校验器直接判 `nexau_json.agent_name.mismatch`） |
 | 3 | `agent.yaml` : `skills` 列表 | 改成你自己的 skill 目录；**目录 basename 就是运行时路径的最后一段**，改名要连带改 systemprompt 里所有 `/home/user/.skills/<basename>/…` |
-| 4 | `agent.yaml` : `llm_config.model` | 保持 `${env.LLM_MODEL}`（跟随项目默认模型）；⚠️ 项目一张可见模型卡都没有时该 env 不会注入，agent 加载直接 ConfigError。要钉死模型就写平台模型卡**全键** `provider/model_name`；⚠️ 别写裸名（如 `gpt-4o`）——sidecar 见无 `provider/` 前缀直接 Reject 且不走回落，A4A 静态校验器也判 error |
+| 4 | `agent.yaml` : `llm_config.model` | 保持 `${env.LLM_MODEL}`（跟随项目默认模型）；⚠️ 项目一张可见模型卡都没有时该 env 不会注入，agent 加载直接 ConfigError。要钉死模型就写平台模型卡**全键** `provider/model_name`；⚠️ 别写裸名（如 `gpt-4o`）——sidecar 见无 `provider/` 前缀直接 Reject 且不走回落，平台静态校验器也判 error |
 | 5 | `agent.yaml` : `max_tokens` / `temperature` | `max_tokens` 按业务调。**`temperature` 本模板已定为 `0.2`**（合规审核属 `../../references/llm-config.md` §5.5 的「法律 / 金融」档：需精确引用、禁止发挥；cookbook 原版是 `1`，见「相对原版的改动」），创意类才往上调。⚠️ **模型卡默认开了 anthropic `thinking` 时上游要求 `temperature: 1`**，平台不做运行期纠正——那种情况改回 `1` 或把该行整行删掉 |
 | 6 | `systemprompt.md` 第 1 行 | 一句话角色定义，换成你的业务身份 |
 | 7 | `systemprompt.md` : `# Skill 加载` / `# 处理流程` 里的 skill 名与路径 | 全量替换 `house-fund-review` → 你的 skill 名；路径根 `/home/user/.skills/` **必须保留原样**（平台静态校验器要求显式出现该根目录） |
@@ -66,7 +66,7 @@
 | 10 | `skills/house-fund-review/references/*.md` | 换成你的原文（法规/制度/标准）。SKILL.md 的「核心法规依据」清单、以及 `references/INDEX.md` 这份导航索引，都必须与 `references/` 下**实际存在的文件**逐一对齐，否则 Agent 会去读不存在的文件（索引缺失或指向不存在/越界路径，静态校验器也会判 error） |
 | 11 | `skills/pdf_to_md/` | 不需要 OCR 就整个删掉，同时删 `agent.yaml` 的 `skills` 那一行 + systemprompt 的 `# PDF 处理` 整节 |
 | 12 | **环境变量：`OCR_API_KEY`（+ 可选 `OCR_BASE_URL`）** | 必须配置在 **sandbox scope**（脚本跑在沙箱里，runtime scope 的变量它读不到）。见 `../../references/env-vars-and-secrets.md` |
-| 13 | `tools/*.tool.yaml` | 通常原样复用。`ask_user` / `complete_task` 两份**随包但未注册**（本模板不挂它们）。要用就得在 `agent.yaml` 里补 `tools` 条目，且**两个都必须登记进 `stop_tools`**（`stop_tools: [ask_user, complete_task]`）——`ask_user` 自己不停机（`session_tools/ask_user.py:155` 只返回一段文本），停机唯一来源是 `execution/tool_executor.py:342-347` 的 `stop_tools` 判定；漏写会一路兜到 `max_iterations: 300` |
+| 13 | `tools/*.tool.yaml` | 通常原样复用。`ask_user` / `complete_task` 两份**随包但未注册**（本模板不挂它们）。要用就得在 `agent.yaml` 里补 `tools` 条目，且**两个都必须登记进 `stop_tools`**（`stop_tools: [ask_user, complete_task]`）——`ask_user` 自己不停机（它只是返回一段文本），停机的唯一来源是框架在工具执行后拿工具名去比对 `stop_tools`；漏写会一路兜到 `max_iterations: 300` |
 | 14 | 打包前 | 目录内**不得有符号链接**（含符号链接的归档必 400 失败）、压缩包 ≤ 100 MiB、必须含 `nexau.json`。见 `../../references/nexau-json-and-packaging.md` |
 
 ## 关键设计要点
@@ -122,23 +122,23 @@
 | `systemprompt.md` | `skills/house-fund-review/…` → `/home/user/.skills/house-fund-review/…`，并新增一句"`LoadSkill` 返回的 `<SkillFolder>` 是权威路径" | 原相对路径在部署后不存在，Agent 必然读不到 SKILL.md |
 | `systemprompt.md` 第 5 行 | 删掉「**或直接读取** `/home/user/.skills/house-fund-review/SKILL.md`」这个备选 | 把「不加载 skill 直接拼路径读文件」写成官方备选，正是本 skill `../../SKILL.md`「四个必须防的 Agent 坏习惯」表里点名的第 2 条，也和同文件下一段「一律以 `LoadSkill` 返回的 `<SkillFolder>` 为权威路径」自相矛盾。后文正文里的绝对路径保留（那里已声明只是 `<SkillFolder>` 的默认形态） |
 | `systemprompt.md` | 第 3 步 "使用 `pdf_to_md` 工具" → "用 `pdf_to_md` 技能提供的脚本" | 制品里根本没有名为 `pdf_to_md` 的工具，原文会诱导 Agent 调用不存在的工具 |
-| `systemprompt.md` | `# PDF 处理 / 转换方式` 改成两档：消息里已给出 `full_text.md` / `page_{N}.md` 路径就直接 `read_file`，只有拿到未转换的 `.pdf` 才回退跑脚本 | Playground / SimpleChat 上传 PDF 后平台会自动 OCR 并把转好的 Markdown 路径拼进 user message（`frontend/src/pages/Playground/messageHelpers.ts:242-270`，产物目录 `/home/user/uploads/converted/{file_id}/`）。原文让 Agent 无条件再转一遍，是重复劳动，还平白把 `OCR_API_KEY` 变成主路径的硬依赖 |
+| `systemprompt.md` | `# PDF 处理 / 转换方式` 改成两档：消息里已给出 `full_text.md` / `page_{N}.md` 路径就直接 `read_file`，只有拿到未转换的 `.pdf` 才回退跑脚本 | Playground / SimpleChat 上传 PDF 后平台会自动 OCR 并把转好的 Markdown 路径拼进 user message（产物目录 `/home/user/uploads/converted/{file_id}/`）。原文让 Agent 无条件再转一遍，是重复劳动，还平白把 `OCR_API_KEY` 变成主路径的硬依赖 |
 | `systemprompt.md` | `# PDF 处理` 新增一段：脚本依赖 `OCR_API_KEY`/`OCR_BASE_URL`，缺失时直接告知用户而非伪造结果 | 密钥缺失是最常见的部署失败点，且必须防"OCR 失败后编造材料内容" |
 | `skills/house-fund-review/SKILL.md` | 「核心法规依据」三份文件的清单，改为标注 1 份随附 + 2 份未随附；新增"先 `list_directory` 确认实际文件"与绝对路径提示 | 本模板已裁剪掉 2 份原文（见下），索引与实际文件不一致会导致读不存在的文件 |
 | `skills/pdf_to_md/SKILL.md` | 「使用方式」由 `pdf_to_md(file_path=…)` 工具调用改为 `run_shell_command` + 绝对脚本路径 | 同上，纠正不存在的工具调用 |
 | `skills/pdf_to_md/SKILL.md` | 「注意事项」`SILICONFLOW_API_KEY`（已有默认值）→ `OCR_API_KEY`（必填无默认）+ `OCR_BASE_URL`（可选）+ 必须配 sandbox scope；依赖那条补"沙箱已预装、无需 setup" | 对着 `scripts/pdf_to_md.py:106-107` 核实，原文的变量名与"已有默认值"两处都是错的；cookbook 金融篇「沙箱只有标准库」的说法也已过时（沙箱预装 PyMuPDF/httpx） |
 | **裁剪** `skills/house-fund-review/references/住房公积金管理条例.md`、`上海市住房公积金管理若干规定.md` | 已删除，仅保留最常用的《上海市住房公积金提取管理办法》 | 控制模板体积；完整 3 份原文见 cookbook 原目录 `nexau-cookbook/住房公积金审核/住房公积金提取审核/skills/house-fund-review/references/` |
 | `agent.yaml` | `name: house_fund_review_agent` → `name: house_fund_review` | 必须与 `nexau.json` 的 agent key 逐字一致，原版两处不一致（校验器 `nexau_json.agent_name.mismatch`）。改 `agent.yaml` 而非 `nexau.json`，是为了让 `nexau.json` 继续逐字保留原版 |
-| `agent.yaml` | `llm_config.temperature: 1` → `0.2`（并在 yaml 里加注说明原值与 thinking 例外） | 原版的 `1` 与本 skill `../../references/llm-config.md` §5.5 直接打架：本模板做的是住房公积金提取的**政务合规核查**，正是该表里「法律 / 金融问答 → 0.0–0.2，需要精确引用、禁止发挥」那一档。平台对 temperature **不做任何运行期纠正**（`server.py:1611-1614`），填 `1` 就真按 `1` 发上去。唯一该保留 `1` 的情形是模型卡默认开了 anthropic `thinking`（上游强制 `temperature: 1`），已写进注释 |
+| `agent.yaml` | `llm_config.temperature: 1` → `0.2`（并在 yaml 里加注说明原值与 thinking 例外） | 原版的 `1` 与本 skill `../../references/llm-config.md` §5.5 直接打架：本模板做的是住房公积金提取的**政务合规核查**，正是该表里「法律 / 金融问答 → 0.0–0.2，需要精确引用、禁止发挥」那一档。平台对 temperature **不做任何运行期纠正**，填 `1` 就真按 `1` 发上去。唯一该保留 `1` 的情形是模型卡默认开了 anthropic `thinking`（上游强制 `temperature: 1`），已写进注释 |
 | `agent.yaml` | 末尾新增 `middlewares: []` + 一行说明注释 | `middlewares` 是必填列表键，缺键判 `middlewares.invalid_type`；本模板不挂中间件，故给空列表 |
 | `systemprompt.md` | 「技能目录部署后统一位于 …」改写为「部署后 skills 根目录位于 `/home/user/.skills/`，每个技能都是它下面的一个子目录……一律以 `LoadSkill` 返回的 `<SkillFolder>` 为权威路径」 | 校验器要求 systemprompt 里**原样出现**「skills 根目录位于 `/home/user/.skills/`」这个措辞（`agent.system_prompt.required_pattern_missing`），原文语义对但措辞不匹配；顺带把「绝对路径只是 `<SkillFolder>` 的默认形态」讲清楚 |
 | `skills/house-fund-review/SKILL.md` | 「核心法规依据」开头那句里的代码块绝对路径 `` `/home/user/.skills/house-fund-review/references/` `` 改为正文叙述（不加反引号），代码块只留 `references/`，并加一句指向本目录的导航索引 | 校验器把 SKILL.md 代码块里的路径按**相对 skill 根**解析，绝对路径一律判 `skills.references.path_escapes_skill_root` |
 | **新增** `skills/house-fund-review/references/INDEX.md` | 新写一份 references 导航索引：实际文件清单（只有《上海市住房公积金提取管理办法》一份）+ 该办法十章的条款范围与用途速查 + 明确列出两份**未随附**的上位法并给退出路径 | 非空 `references/` 必须有 `INDEX.md` 索引（校验器因 `index_file` 配置缺陷会报 `skills.references.index_missing`）。内容按目录里**真实存在**的文件写，裁剪掉的两份只作为"不在本目录、读了必失败"的告警出现 |
 | `TEMPLATE.md` | 目录树补 `references/INDEX.md` 与 `middlewares: []`；「必须改的地方」第 2/10 条补校验器硬约束；「已知的坑」新增 2 行（references 绝对路径越界、references 缺索引） | 与上述改动保持一致 |
-| `TEMPLATE.md` | 「必须改的地方」开头新增**数据去向**提示；选型表「完全离线」那格改成「材料涉个人信息 / 不允许出网」；第 13 条把 `stop_tools` 的要求从只系在 `complete_task` 上改成 `ask_user` / `complete_task` **两个都要登记** | ① 原文只把公网 OCR 当连通性问题（「能出网就没问题」），本模板处理的是市民材料，数据出境是**合规决策**不是可用性选项；② `ask_user` 同样不自带停机（`session_tools/ask_user.py:155` 只返回文本），照原第 13 条加挂就会漏配 `stop_tools` 兜到 `max_iterations` |
+| `TEMPLATE.md` | 「必须改的地方」开头新增**数据去向**提示；选型表「完全离线」那格改成「材料涉个人信息 / 不允许出网」；第 13 条把 `stop_tools` 的要求从只系在 `complete_task` 上改成 `ask_user` / `complete_task` **两个都要登记** | ① 原文只把公网 OCR 当连通性问题（「能出网就没问题」），本模板处理的是市民材料，数据出境是**合规决策**不是可用性选项；② `ask_user` 同样不自带停机（它只返回文本），照原第 13 条加挂就会漏配 `stop_tools` 兜到 `max_iterations` |
 | 未改动 | `nexau.json`（含 `excluded`）、`tools/*.tool.yaml`（8 份，`additionalProperties: false` 全保留）、`scripts/pdf_to_md.py`、SKILL.md 的业务表格与工作流 | 逐字保留原版。⚠️ 注意 `excluded` 平台**完全不解析**，只是打包端约定 |
 | 未改动 | `tool_call_mode: structured` | 原版已是合法值（合法值只有 `xml` / `structured`），无需改 |
-| `TEMPLATE.md` 第 4 条 | 「要钉死模型就写死模型名」→ 明确要求写 `provider/model_name` 全键并警告裸名 | 裸名比写错全键更糟：sidecar 直接 Reject 不回落，A4A 静态校验器判 error（见 `../../references/troubleshooting.md`） |
+| `TEMPLATE.md` 第 4 条 | 「要钉死模型就写死模型名」→ 明确要求写 `provider/model_name` 全键并警告裸名 | 裸名比写错全键更糟：sidecar 直接 Reject 不回落，平台静态校验器判 error（见 `../../references/troubleshooting.md`） |
 
 ## 延伸
 
