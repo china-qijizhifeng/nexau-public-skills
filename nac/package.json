@@ -1,0 +1,23 @@
+{
+  "name": "@north-ai/agent-cloud-skill",
+  "version": "0.4.4",
+  "description": "Claude Code skill for NAC (North Agent Cloud) CLI",
+  "license": "MIT",
+  "keywords": [
+    "claude-code-skill",
+    "nac",
+    "north-agent-cloud",
+    "cli",
+    "ai-agent"
+  ],
+  "files": [
+    "SKILL.md",
+    "references/"
+  ],
+  "claude-code": {
+    "skill": true,
+    "requires": {
+      "bins": ["nac"]
+    }
+  }
+}

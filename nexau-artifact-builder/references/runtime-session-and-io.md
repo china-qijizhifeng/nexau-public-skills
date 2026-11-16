@@ -289,4 +289,4 @@ Playground / SimpleChat 上传 PDF 后会**自动**调 `pdf-convert`，
 - **快照失败时的降级行为**（pause 存快照失败会不会丢文件）只核到「失败时保留 running 状态供下轮重试」，
   未做真机验证。
 
-（框架侧核实于 NexAU SDK 0.5.0。）
+（框架侧所对应的 NexAU SDK 版本号未核，见 SKILL.md 开头。）

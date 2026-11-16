@@ -67,7 +67,7 @@
 
 | 错误信息 / 症状 | 根因 | 修复动作 | 细节 |
 |---|---|---|---|
-| 每次 chat 都 **422** `{"code":"LLM_PROVIDER_UNROUTABLE", ...}`，但**部署是绿的** | 上传/部署期**完全不校验** model 可路由性，sidecar 在每次请求时才拒。触发条件：`llm_config.model` 的全键不在项目可见卡片表里，**且**没能走成回落（回落要求项目至少有一张可见模型卡、且 `LLM_MODEL` 已注入） | ① 核对 `provider/model_name` 全键拼写；② 确认该卡对本项目**可见且已授权**（隐藏卡要 admin 解锁）；③ 想跟随项目默认就写 `${env.LLM_MODEL}` 或整段省略 `llm_config`。⚠️ **「项目一张授权卡都没有」（路由表整个为空）也是走这条 422，不是 503** —— body 里有 `model` 字段就一定要做一次路由解析 → 查不到 → Reject | `llm-config.md` |
+| 每次 chat 都 **422** `{"code":"LLM_PROVIDER_UNROUTABLE", ...}`，但**部署是绿的** | 上传/部署期**完全不校验** model 可路由性，sidecar 在每次请求时才拒。触发条件：`llm_config.model` 的全键不在项目可见卡片表里，**且**没能走成回落（Rust 运行时的回落要求项目至少有一张可见模型卡、且 `LLM_MODEL` 已注入；默认的 Python 运行时部署期不回落，见 `llm-config.md` §3.3） | ① 核对 `provider/model_name` 全键拼写；② 确认该卡对本项目**可见且已授权**（隐藏卡要 admin 解锁）；③ 想跟随项目默认就写 `${env.LLM_MODEL}` 或整段省略 `llm_config`。⚠️ **「项目一张授权卡都没有」（路由表整个为空）也是走这条 422，不是 503** —— body 里有 `model` 字段就一定要做一次路由解析 → 查不到 → Reject | `llm-config.md` |
 | 同上 422，但 `model` 写的是**裸名**（如 `gpt-4o`，没有 `provider/` 前缀） | 裸名**比写错全键更糟**：sidecar 见无前缀直接 Reject，**不走回落**；平台静态校验器也把它列为 error | model 必须是 `provider/model_name` 全键，或 `${env.LLM_MODEL}` | `llm-config.md` |
 | chat **503** 纯文本 `no LLM provider configured` | ⚠️ **不是「路由表为空」这么简单**：503 只在走到 `Fallback` 分支且路由表为空时才出，而 Fallback 只由「请求体不是合法 JSON」或「请求体压根没有 `model` 字段」产生；非 chat 端点（`/v1/embeddings`、`/v1/models`）路由表为空也是 503。**带 `model` 的 chat 请求即使路由表为空也是 422**（见上两行） | 制品作者日常几乎碰不到。真见到就先确认自己是不是在直调 sidecar 的非 chat 端点、或发了畸形 body；不要一看到 503 就去动模型卡 | `llm-config.md` §3.3 |
 | chat **503** `{"code":"UPSTREAM_5XX_CIRCUIT_OPEN", "retry_after_secs": N}` | 该 provider 的**熔断器打开**——上游连续 5xx 触发。熔断键是 `全键 ‖ 上游 endpoint`，所以只熔这一张卡这个端点 | 等 `retry_after_secs` 冷却，或修上游；同样不要去改模型卡配置 | `llm-config.md` |
@@ -105,7 +105,7 @@
 | `extra_kwargs` 没传进去 / 某个工具选项完全没生效，**日志一句话都没有** | ⚠️ **`tools:` / `skills:` 的条目完全不校验**：这两个字段的元素类型实际上是 `Any`，没真正用泛型参数化，所以条目级的 `extra='forbid'` 在列表元素上**不起作用**——拼错的 key（`extra_args`、`path`、`lazy_load`…）被**静默忽略**，也不进 skipped_components | 逐字符核对字段名：`name` / `yaml_path` / `binding` / `lazy` / `as_skill` / `defer_loading` / `extra_kwargs` / `source_id`。**真正会报错的只有缺 `name` 和缺 `yaml_path`** | `agent-yaml-fields.md` |
 | 自定义工具读用户上传的文件恒报「文件不存在」，但文件确实上传成功了；**runtime 日志零 warn/error、sandbox-proxy 无请求记录、trace 里也没有失败 span** | 工具签名写成 `(*args, **kwargs)` → 四个保留注入参数**全部拿不到**（框架按**具名形参**匹配注入，`*args`/`**kwargs` 匹配不上，而且是静默跳过），代码于是回落到裸 `pathlib`，在 **runtime 容器**里找沙箱的 `/home/user/uploads/...`。返回的是普通 dict 而非异常，所以整条链路可观测层面完全静默 | 把注入参数改成具名形参（keyword-only 也行）：`def f(*args, agent_state=None, **kwargs)`；再走 sandbox 句柄读文件。自查命令见 `custom-tools.md` §3 | `custom-tools.md` §1/§3 |
 | 自定义工具报告文件「已生成」（`created: true` / size > 0），但用户下载不到、`run_shell_command` 也 `ls` 不出来 | 工具用裸 `open()` / `zipfile.ZipFile(path)` 写盘 → 写进了 **runtime 容器**的 `/home/user`（真实存在且可写），本地 `path.exists()` 自然为真，于是「成功」被自证。沙箱里根本没有这个文件 | 写盘走 `sandbox.write_file(path, raw, binary=True)`，并以返回的 `status` / `sandbox.get_file_info()` 为判据，不要用本地 `path.exists()` 自证。二进制先在 `io.BytesIO` 里打包 | `custom-tools.md` §1/§11 |
-| Agent 用的模型不是 yaml 里写的那个，**而且 temperature / max_tokens / thinking 全部失效** | model 全键查不到卡片时，runtime 判定整段 `llm_config` 不可信，**重建一个只含 model/base_url/api_key 的干净 LLMConfig**，采样/推理参数**全丢**。前提是项目至少有一张可见模型卡、且 `LLM_MODEL` 已注入，否则不回落、直接每次 422（见表 C） | 「模型名打错一个字母 → 采样参数静默全丢」。核对全键拼写与卡片授权 | `llm-config.md` |
+| Agent 用的模型不是 yaml 里写的那个（**temperature / max_tokens / thinking 是否还在**要分运行时看） | Rust 运行时：model 全键查不到卡片、项目有可见卡且 `LLM_MODEL` 已注入时**只换 model**（api_type / 连接跟着换），yaml 里写了的采样/推理参数**保留**；Python 运行时（默认）部署期不换 model，api_type 变了才会剔 yaml 里的外类专属键。没有可回落的就每次 422（见表 C）。**整段丢参数是 v0.5.0 / v0.5.1 的旧行为** | 按 `llm-config.md` §3.3 的日志判据确认走了哪条；核对全键拼写与卡片授权 | `llm-config.md` |
 | 换了项目默认模型后，agent 跟着漂了（或没跟着漂） | `${env.LLM_MODEL}` / 省略 model / 省略整段 `llm_config` 都会被标记 **follow-default**，Gateway 缓存刷新后跟随项目/环境默认模型；写死全键则钉死 | 这是**选择题**不是风格问题：要跟随写 `${env.LLM_MODEL}`，要锁定写全键 | `llm-config.md` |
 | agent.yaml 里写的 `base_url` / `api_key` / `api_type` / `stream` 一点效果没有 | 全被平台覆盖：`base_url`/`api_key` 在注入 LLM 配置时被无条件覆盖；`api_type` 被模型卡派生值覆盖；`stream` 在流式路径被强制 True | 删掉这些行（噪声）。**唯一真禁**的是字面量 `api_key`——凭证进制品是安全事故，平台静态校验器直接 error。想接自己的 LLM 网关只能走 per-request `override_llm_configs`，不是 agent.yaml | `llm-config.md` |
 | 沙箱创建失败 / 路由到奇怪的地方，配置看着都对 | **你自己在 agent.yaml 里写了 `sandbox_config`**。平台只在制品里这一项**缺席**时才注入自己那份，你一写平台就不注入了 | 删掉 `sandbox_config`（这是「写了必坏」的两个字段之一） | `agent-yaml-fields.md` |
@@ -144,6 +144,10 @@
 | 部署状态 failed / pod CrashLoop / readiness 一直不过 | A 层 | 在平台控制台打开该部署的 **runtime 运行日志**（有集群权限的话也可直接看 runtime pod 日志），grep `Error loading configuration from` 与 `Traceback`。有 setup 的还要 grep `setup command failed` |
 | 部署绿了，一发 chat 就报错 | C 层 | 看 chat 响应体的 `code` 字段（`LLM_PROVIDER_UNROUTABLE` 之类）；再看 runtime pod 日志同一时刻的记录 |
 | 部署绿、chat 也 200，只是答得不对 | D 层 | 对表 D 逐条排。**这一层不要指望日志报错** |
+
+**第一步补充：开发循环里的命令行坑（`nac dev` 不监听文件、`nac chat` 中文 panic、`nac logs` 不过滤、
+两把钥匙用错的 400/401）、工具返回过大导致模型 400、MCP 连不上工具不加载、模型熔断 503，
+统一见 `references/dev-debug-loop.md`。**
 
 **第二步：区分加载期 vs 运行期失败的判据。**
 

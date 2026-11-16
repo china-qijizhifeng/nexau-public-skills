@@ -65,8 +65,8 @@
 > 它值得单独讲，是因为这个值给小了会**在用户看得见的地方**截断任务。
 
 **给小了的表现不是静默的**：撞上限时 executor 会给 `AgentStopReason.MAX_ITERATIONS_REACHED`，
-并在最终回复末尾拼一句 `[Note: Maximum iteration limit reached]`（另一条收尾路径拼的是
-`[Error: Maximum iteration limit reached.]`）。所以「Agent 干到一半停了、末尾挂着一句 limit reached」= 这个值不够用。
+并在最终回复末尾拼一句 `[Error: Maximum iteration limit reached.]`（常见路径；另有收尾路径拼的是
+`[Note: Maximum iteration limit reached]`，两者前面都是字面 `\n\n` 四个字符）。run 状态不会变成失败。所以「Agent 干到一半停了、末尾挂着一句 limit reached」= 这个值不够用。
 
 **给大了不是免费的**，三笔代价：
 
@@ -389,7 +389,7 @@ chat 路由在入口网关上的读超时是 3600s，不会先于网关掐，所
 
 讲「超时怎么配」时务必区分这三层。
 
-（框架侧行为核实于 NexAU SDK 0.5.x。）
+（框架侧行为所对应的 NexAU SDK 版本号未核，见 SKILL.md 开头。）
 
 ---
 

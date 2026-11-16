@@ -136,20 +136,28 @@ C 只是 A 的省略写法，**不比 A 更耐操**：项目零可见卡时三�
 
 **规则：`model` 必须是 `provider/model_name` 全键，或 `${env.LLM_MODEL}`。没有第三种。**
 
-### 3.3 ⚠️「优雅回落」是**有条件**的
+### 3.3 ⚠️「优雅回落」是**有条件**的，且**因运行时而异**
 
-旧 skill 把「model 写错 → 优雅回落项目默认」写成无条件成立，**错**。回落只在两个前提同时成立时才发生：**① 项目至少有一张可见模型卡**，**② 平台注入了兜底模型 `LLM_MODEL`**。而且一旦触发回落，平台就把整段 `llm_config` 判为不可信，只留下连接信息。
+旧 skill 把「model 写错 → 优雅回落项目默认」写成无条件成立，**错**。再早的一版又写成「一回落就整段 `llm_config` 判不可信、采样参数全丢」，这在**当前版本线上也不成立**（只有 v0.5.0 / v0.5.1 的 Python 运行时有过，日志含 `ignoring agent.yaml llm_config entirely and falling back to project LLM config`；v0.5.2 起已删）。现状按**哪个运行时在跑**分：
 
-| 前提 | 结果 |
-|---|---|
-| 项目有可见卡 **且** `LLM_MODEL` 已注入 | 回落到 `LLM_MODEL`。**但整段 llm_config 被判为不可信** —— `temperature` / `max_tokens` / `top_p` / `thinking` / `output_config` / `reasoning` **全部丢弃**，只保留连接信息 |
-| 项目一张可见卡都没有 **或** `LLM_MODEL` 未注入 | **不回落**，model 原样保留 → sidecar 每次 chat 返回 **422 `LLM_PROVIDER_UNROUTABLE`**（runtime 日志会留一行 `LLM_MODEL not set; leaving model as-is`） |
+- **Rust 运行时**（`nexau.json` 声明 `backend: nexau-rs`，且环境放开了 Rust 运行时）：model 全键查不到卡片时，回落只在两个前提同时成立时发生：**① 项目至少有一张可见模型卡**，**② 平台注入了兜底模型（日志里叫 `LLM_MODEL`）**。
+- **Python 运行时**（默认，不声明 `backend` 的制品都是它）：**部署期不做 model 回落**，只留一行 INFO，model 原样保留，后续交给 sidecar 在每次 chat 时路由。只有请求带了模型目录且给了兜底模型的路径，才会在请求期把 model 换掉。
+
+| 运行时 / 前提 | 结果 | 判据日志 |
+|---|---|---|
+| Rust，有可见卡 **且** `LLM_MODEL` 已注入 | 回落到 `LLM_MODEL`：**只换 model**，api_type 按新模型卡重新推导，base_url / api_key 换成平台连接。`agent.yaml` 里**写了**的 `temperature` / `max_tokens` / `top_p` / `thinking` / `output_config` / `reasoning` **照常保留**；没写的键才由环境 / 项目 / 卡片参数补（补缺时不属于新 api_type 的专属键不补）。新 api_type 是 anthropic 家族时，base_url 尾部 `/v1` 被剥掉，yaml 与选中档都没有 `max_tokens` 则补默认 8192 | `model has no matching model card in meta map; falling back to LLM_MODEL`（字段 `yaml_model`、`fallback`） |
+| Rust，一张可见卡都没有 **或** `LLM_MODEL` 未注入 | **不回落**，model 原样保留 → sidecar 每次 chat 返回 **422 `LLM_PROVIDER_UNROUTABLE`** | 有卡但没兜底时：`model has no matching model card but LLM_MODEL not set; leaving model as-is`；**一张可见卡都没有时这行日志也不出现**，直接看 422 |
+| Python（默认） | 部署期**不回落、不改 api_type、不动任何 yaml 参数**；model 不在卡表时原样出站，通常每次 chat **422 `LLM_PROVIDER_UNROUTABLE`**。请求带 `llm_catalog` 与兜底模型时，请求期可能换成兜底模型（api_type / 连接跟着换，yaml 显式写的参数保留） | 部署期 `model '<名>' has no matching model card; leaving as-is`；请求期 `agent '<名>' llm key '<key>' not routable via llm_catalog; effective_model='<名>'` |
+
+两条运行时的共同点：**回落发生与否都不会把 yaml 里显式写的采样参数整段丢掉**。差别在 api_type 变了之后：**Python 会按最终 api_type 剔掉 `extra_params` 里不属于它的专属键，包括 yaml 自己写的**（例如最终是 openai 系时 yaml 的 `thinking` / `output_config` 被剔；最终是 anthropic 时 yaml 的 `reasoning` / `max_output_tokens` 被剔），日志 `dropping extra param '<键>' — not valid for api_type '<类型>'`；**Rust 不剔 yaml 自带的键**（只过滤补缺来的），所以 Rust 回落到 openai 系后 yaml 里的 `thinking` 仍会发给上游，可能被上游拒。
+
+> 哪个运行时在跑：默认 Python；Rust 要制品声明 `backend: nexau-rs`，且环境已开放 Rust 运行时，否则发布被拒（400，报错文案提到 `backend=nexau-rs` 与 `execution gate is not opened`）。以环境实际能否发布 `backend: nexau-rs` 的版本为准（发布被拒 = 没开）。拿不准就看 runtime 日志里出的是上表哪一行。
 
 > ⚠️ 别把「路由表空」等同 503。chat 路径上只要请求体里有 `model` 字段，路由表为空同样是解析失败 → 拒绝 → **仍是 422**。503 `no LLM provider configured` 只出现在另一条分支——**请求体不是合法 JSON 或压根没有 `model` 字段**、或走的是非 chat 端点（`/v1/embeddings`、`/v1/models`）**且**路由表为空时。制品作者日常见到的是 422。
 
 两条必须写进制品作者脑子里的推论：
 
-- **「模型名打错一个字母」= 采样参数静默全丢**，日志只有一行 INFO，很难自己发现。
+- **「模型名打错一个字母」在 Python 运行时 = 每次 chat 422；在 Rust 运行时（有兜底时）= 悄悄换成项目默认模型**，日志只有一行 INFO，很难自己发现——模型换了，yaml 里写的采样参数还在，但 api_type 不同的话行为可能和你预期不一样。
 - **未授权 / 隐藏未解锁的模型卡对项目「等同不存在」**：不进 sidecar 凭证表、不进 META、不进兜底候选。写了未授权卡片 ≡ 写了不存在的卡片。
 
 ### 3.4 ⚠️ `${env.LLM_MODEL}` 也可能让 agent 加载不起来
@@ -272,7 +280,7 @@ per-request 顶层 params  >  per-request providers 点名 params  >  agent.yaml
 | 创意写作 / 头脑风暴 | 0.5 – 0.7 | 需要多样性 |
 
 ⚠️ **anthropic 家族开 `thinking` 时上游要求 `temperature: 1`**，平台不会帮你改。要么显式写 `temperature: 1`，要么整个别写 temperature（让它保持 None）。写 `temperature: 0.2` + `thinking: enabled` 会原样发上去，由上游报错。
-> 「上游会拒」是模型侧约束。一个旁证：平台在 §3.3 那种回落场景里**特意丢弃** temperature，给出的理由正是「避免把 agent 的 temperature 灌进开了思考的 anthropic 调用而**被上游拒**」。
+> 「上游会拒」是模型侧约束，平台不替你纠正（回落场景里也一样：yaml 写了的 temperature 原样保留，见 §3.3）。
 
 ---
 
@@ -292,9 +300,9 @@ per-request 顶层 params  >  per-request providers 点名 params  >  agent.yaml
 |---|---|---|
 | 1 | model 是不是裸名？ | 没有 `provider/` 前缀 → 必 422，先修这个（§3.2） |
 | 2 | 全键是否命中**本项目可见**的卡片？ | 未授权 / 隐藏未解锁的卡 ≡ 不存在。在平台模型配置里确认该卡对本项目可见 |
-| 3 | runtime 日志有没有回落记录？ | 搜 `has no matching model card`：带 `falling back to project LLM config (model='...')` = 走了回落（**采样参数已全丢**）；带 `LLM_MODEL not set; leaving model as-is` = 没回落，随后 422 |
+| 3 | runtime 日志有没有回落记录？ | 搜 `has no matching model card`：Rust 运行时带 `falling back to LLM_MODEL` = 走了回落（只换 model，yaml 里写了的采样参数还在）；Rust 带 `LLM_MODEL not set; leaving model as-is`、或 Python 带 `leaving as-is` = 没回落，随后通常 422。Python 请求期换模型的日志是 `not routable via llm_catalog; effective_model=`（见 §3.3 的表）。`ignoring agent.yaml llm_config entirely` 只在 v0.5.0 / v0.5.1 出现 |
 | 4 | api_type 被改了？ | 搜 `deriving api_type for model card` —— 平台按卡片覆盖是**预期行为**，不是 bug |
-| 5 | 采样参数明明写了却没生效？ | 先排 3（回落连坐丢参数），再看是不是被环境/项目固化的 switch 整块取代（§5.1），最后看 runtime 日志里那行「这次补参数用的是哪一档」（`environment defaults` / `project defaults` / `model card '...' params`） |
+| 5 | 采样参数明明写了却没生效？ | 先排 3（是不是已经换了模型 / api_type；Python 下 api_type 变了会剔 yaml 里的外类专属键，日志 `dropping extra param`），再看是不是被环境/项目固化的 switch 整块取代（§5.1），最后看 runtime 日志里那行「这次补参数用的是哪一档」（`environment defaults` / `project defaults` / `model card '...' params`） |
 | 6 | 请求返回 422 `LLM_PROVIDER_UNROUTABLE` | 报文 `message` 会写 `not found in routing table (was the card deleted/hidden/renamed after upload?)` 或 `has no provider_name/ prefix` —— 直接指出是哪一类 |
 | 7 | 请求返回 503 `no LLM provider configured` | **不是**「model 写错」这一类。只可能是：请求体非法 JSON / 无 `model` 字段，或走的是非 chat 端点，**且**路由表为空。chat 路径的模型问题一律 422 |
 | 8 | agent 起不来，`ConfigError: Environment variable 'LLM_MODEL' is not set` | 项目一张可见卡都没有（§3.4）。不是你的 yaml 语法问题 |

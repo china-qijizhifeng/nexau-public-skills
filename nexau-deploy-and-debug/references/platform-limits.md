@@ -128,7 +128,7 @@ cat /var/log/x      # 多半没了
 | 字段 | 默认 | 撞到时 |
 |---|---|---|
 | `max_context_tokens` | 128000 | 触发上下文压缩，SSE 上出 `COMPACTION_STARTED` / `COMPACTION_FINISHED` |
-| `max_iterations` | 100 | 强制收尾，**最终回复末尾追加 `[Note: Maximum iteration limit reached]`** ← 这就是判据 |
+| `max_iterations` | 100 | 强制收尾，**最终回复末尾追加 `[Error: Maximum iteration limit reached.]`**（少数路径是 `[Note: Maximum iteration limit reached]`）← 这就是判据；run 状态仍是成功，前面带的是字面 `\n\n` |
 | `max_running_subagents` | 5 | 并行子 agent 上限 |
 | `retry_attempts` | 5 | 模型调用重试次数 |
 | `timeout` | 300 秒 | **单次工具 / 模型调用**超时（⚠️ 别和 `run_shell_command` 的 30 分钟混了，也别和非流式的 300 秒整体超时混了） |

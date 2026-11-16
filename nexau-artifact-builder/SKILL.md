@@ -12,7 +12,7 @@ description: >-
 # NexAU Agent 制品开发指南
 
 > **事实源纪律**：本 skill 的每条硬结论都对着 NexAU 框架与 NAC 平台的实际运行行为核实过
-> （框架侧 = NexAU SDK `0.5.0`）。文档会过时，运行时的实际行为才是事实源。
+> （框架侧 = NexAU SDK，版本号未核：NAC 仓库 origin/main 钉的 `third_party/nexau`（提交 a533e798）的 pyproject version 不随发版更新（`0.5.0` tag 本身也写 `0.4.1`），不能拿它当版本判据；运行镜像内实际装的版本未核，判据：进沙箱/镜像跑 `pip show nexau`）。文档会过时，运行时的实际行为才是事实源。
 > 与本文冲突时以实测为准。
 
 > ### 与平台侧 A4A 三个 skill 的关系（重要，别搞反上下游）
@@ -53,6 +53,7 @@ description: >-
 | 上下文压缩、超长输出、内容安全护栏 | `references/middlewares.md` |
 | nexau.json 字段、打包、运行时路径 | `references/nexau-json-and-packaging.md` |
 | **多轮记忆 / 沙箱跨轮复用 / 用户上传的文件在哪 / 多 agent 怎么调 / 请求超时** | `references/runtime-session-and-io.md`（**做对话型或多步骤制品前必读**） |
+| **开发调试循环 / nac 命令行装法与地址 / 工具返回过大 400 / 离线 HTML / MCP 连不上** | `references/dev-debug-loop.md` |
 | 报错了 / 行为不对 | `references/troubleshooting.md`（先查这里，再翻别处） |
 | 确认制品符不符合官方规范 | `references/artifact-spec-checklist.md`（**生成任何新制品前当 checklist 过一遍**） |
 | 找一个最接近我业务的现成例子 | `templates/README.md` 选型表 |
@@ -60,6 +61,8 @@ description: >-
 ## 1. 制品是什么
 
 制品（Artifact）= 运行一个 Agent 所需的全部配置和资源打成的压缩包（tar / tar.gz / zip）。
+
+> **适用范围**：本 skill 管 NexAU 制品（顶层有 `nexau.json` + `agent.yaml`），原生和托管 NexAU 用同一种包格式（`examples/framework-artifacts/nexau/` 就是这种格式的样例）。LangGraph、DeepSeek Harness 走托管运行轨（`runtime_profile=agent-host`），包结构与校验规则不同，不在本 skill 范围；上传形态参考 NAC 仓库 `examples/framework-artifacts/` 下的 `langgraph*/`、`deepseek-harness/`（以该目录 README 为准）。
 上传后平台解析 `nexau.json` 注册 Agent，部署时由 Agent Runtime 加载运行。
 
 ```
@@ -122,6 +125,8 @@ cd /path/to/parent && tar -czf my-agent.tar.gz my-agent/
 - **归档只允许普通文件和目录** —— 含符号链接 / 设备 / FIFO 一律 400，所以**不要把
   `node_modules/` `venv/` `.git/` 打进去**；同时排除 `__pycache__/` 与 `*.pyc`
   （不会导致上传失败，但会把无用二进制打进制品——用 `tar --exclude` 或打包前清一遍）
+- **skill 目录也别带 `node_modules/` 或大量第三方源码**：每个会话都会拷一份 skill；经网关上传时
+  内容可能被网关关键词拦截（仅当平台前面挂了安全网关时），见 `references/dev-debug-loop.md` §8
 - **必须含 `nexau.json`**
 
 ### 第五步：排障
@@ -131,6 +136,13 @@ cd /path/to/parent && tar -czf my-agent.tar.gz my-agent/
 > **用 `nac` CLI 跑闭环（可选）**：装了 North Agent Cloud CLI 就能一条龙做
 > 打包 → 建版本 → 部署 → smoke/chat 验证 → 拉 log/trace。
 > **命令细节以独立的 `nac` skill 为准**，本 skill 不复制 CLI 参考（避免两处漂移）。
+
+> **「改一下、部署、对话、看 trace」的开发循环、先配地址、两把钥匙（访问令牌 vs API 密钥）、
+> `nac dev` 在 0.4.x 的问题（`--watch`/`--chat` 没有实现、退出清理 409）、工具返回过大导致模型 400、
+> skill 目录别带 `node_modules`、离线 HTML、MCP 连不上、模型熔断 503，见 `references/dev-debug-loop.md`。**
+> 一句话版本：别用 `nac dev --watch`；`nac environments create --name dev` 建一次，之后
+> `nac deploy dev --yes` + `nac chat dev -m … --json`；先 `export NAC_BASE_URL=<你的 NAC 地址>`，
+> 否则零配置默认连的是官方正式环境（https://nac.xiaobei.top）。
 
 ## 3. 八条设计原则
 
@@ -280,6 +292,7 @@ description: |
 > **为什么概览表必不可少**：没有它，Agent 每次都得先读根索引才能开始，多一跳、多花 token。
 
 > 🚨 **「skills 根目录位于 `/home/user/.skills/`」这句话是正则硬门，措辞不能改写。**
+> （实测补充：控制台构建检查按这句原文找；命令行 `nac deploy` 不强制，所以「命令行能部署、控制台构建报错」先查这句。）
 > 平台静态校验器用 `(?i)skills\s*根目录位于\s*` + `/home/user/.skills/` 匹配 systemprompt
 > （`builder-static-rules.json` 的 `required_systemprompt_patterns`）。
 > 语义等价但换了动词的写法（「skills **部署在** …」「skill 目录**在** …」）**一律不匹配**，

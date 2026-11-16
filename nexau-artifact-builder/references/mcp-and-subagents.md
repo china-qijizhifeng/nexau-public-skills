@@ -4,7 +4,7 @@
 
 相关但不在本文：自定义 Python 工具的进程边界与 `extra_kwargs` → `references/custom-tools.md`；内置工具清单与 `.tool.yaml` 来源 → `references/builtin-tools.md`；顶层字段全集与校验强度分层 → `references/agent-yaml-fields.md`。
 
-本文描述的行为对应 NAC agent-runtime 镜像内置的那份 NexAU SDK（`0.5.0` 系列）。
+本文描述的行为对应 NAC agent-runtime 镜像内置的那份 NexAU SDK（版本号未核，见 SKILL.md 开头）。
 
 ---
 
@@ -157,7 +157,7 @@ MCP 工具执行时的兜底是：捕获所有异常，记一行 `Error executin
 当前 pin 版本对 MCP 工具统一改名，规则是 `mcp__<server 的 name>__<server 里的原工具名>`。server 里叫 `query_sql`、`name: enterprise_ops_db`，模型看到的就是 `mcp__enterprise_ops_db__query_sql`。
 
 - 写 systemprompt 时**优先按能力描述引导**（「用数据库查询工具执行 SQL」），少写死工具名；确实要写就写全前缀名。
-- 前缀是 `0.5.0` 之前引入的（2026-05-08），**更早的版本不加前缀**；跨版本迁移时写死的工具名会失效——这是把工具名硬编码进 systemprompt 的主要风险点。
+- 前缀是 `0.5.0`（tag 日期 2026-06-10）之前引入的（2026-05-08），**更早的版本不加前缀**；跨版本迁移时写死的工具名会失效——这是把工具名硬编码进 systemprompt 的主要风险点。
 - `tool_permissions` 的 key 是**原始名**（`query_sql`），权限规则串却是**前缀名**（`mcp__enterprise_ops_db__query_sql`）。两处不一样，别抄串了。
 
 ### 3.6 stdio server 跑在 agent-runtime 容器里，不在沙箱里
