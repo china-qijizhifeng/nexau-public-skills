@@ -16,6 +16,7 @@
 > 但只是想调调 `LongToolOutputMiddleware` 参数的，**优先写 `params: {}` 用默认值**。
 > 判读口径与白名单全文见 `references/artifact-spec-checklist.md` §9.3。
 > 另：`middlewares[]` 每个条目**必须同时有 `import` 和 `params`**，没参数也要写 `params: {}`。
+> 另：`LongToolOutputMiddleware` 里「某些工具不要截断」的参数名是 **`bypass_tool_names`**，不是 `bypass_tools`（写错会在加载时报 `unexpected keyword argument`，智能体起不来）。
 
 ---
 

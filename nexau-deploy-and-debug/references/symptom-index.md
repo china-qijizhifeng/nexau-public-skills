@@ -3,6 +3,8 @@
 > 用法：`Ctrl+F` 搜你嘴里会说的那句话。每条固定四段：**取证命令 → 判据 → 修法 → 什么时候该报障**。
 > 排查次序（先分类、先存锚点）在 `SKILL.md` §3；证据面细节在 `evidence-sources.md`。
 
+> **报错出现在前置网关后面、或不确定是网关 / NAC / 模型 / 沙箱哪一边产生的**：先看有没有 `request_id` / `server-timing`（没有 = 没到平台），再回来按症状查。
+
 ---
 
 ## 部署相关
@@ -310,12 +312,62 @@ message 原文 `runtime pod at capacity, please retry shortly`（这里的 "pod"
 {"type":"MODEL_FALLBACK","requested_model":"…","effective_model":"…","message":"…"}
 ```
 
-**判据**：指定的模型不可用时，平台**不报错**，回落到 agent 默认模型继续跑。
-**这个事件是唯一的线索**，忽略它就静默拿到了默认模型。
+**判据**：先分清「谁指定的模型」，两条路径行为不同：
+
+- **chat 请求体里的 `override_llm_configs` 覆盖（旧字段名 `llm`，开了去别名开关的环境带旧名会被 400 拒绝）**不可用（未授权 / 残缺 / catalog 不命中）：回落 agent 默认模型继续跑，
+  并发 `MODEL_FALLBACK`——这个事件是此路径唯一的线索。但覆盖在旁路代理侧解析失败（取值失败、id 非法、
+  过期）时不回落，直接 **422 `LLM_OVERRIDE_UNAVAILABLE`**。
+- **`agent.yaml` 里 `model` 写错 / 无对应模型卡**：**不发** `MODEL_FALLBACK`，行为按运行时分：
+  - **Rust 运行时**（制品 `nexau.json` 声明 `backend: nexau-rs`，且环境放开了 Rust 运行时）：项目有可见卡**且**平台注入了
+    `LLM_MODEL` 才回落到它，日志 `model has no matching model card in meta map; falling back to LLM_MODEL`
+    （字段 `yaml_model`、`fallback`）。只换 model，api_type / 连接按新模型走；`agent.yaml` 里写了的采样参数
+    （`temperature`、`max_tokens`、`thinking` 等）**保留**，没写的才由环境 / 项目 / 卡片补。
+    没有 `LLM_MODEL` 时日志 `...but LLM_MODEL not set; leaving model as-is`，每次 chat 422 `LLM_PROVIDER_UNROUTABLE`。
+  - **Python 运行时**（默认；不声明 `backend` 的制品都是它）：部署期**不回落**，只留一行 INFO
+    `model '<名>' has no matching model card; leaving as-is`，model 原样出站，通常每次 chat 422 `LLM_PROVIDER_UNROUTABLE`。
+    只有请求带模型目录且给了兜底模型时，才在请求期换模型，日志 `agent '<名>' llm key '<key>' not routable via llm_catalog; effective_model='<名>'`。
+  - 模型名缺 `provider/` 前缀两条路径都 422。
+  - 回落（不论哪个运行时）都不是「整段 `llm_config` 丢弃」；那是 v0.5.0 / v0.5.1 Python 才有的旧行为
+    （日志含 `ignoring agent.yaml llm_config entirely and falling back to project LLM config`），v0.5.2 起已删。
+  - 注意：api_type 变了之后，Python 会按新 api_type 剔掉 `extra_params` 里不属于它的专属键（含 yaml 自己写的，
+    日志 `dropping extra param '<键>' — not valid for api_type '<类型>'`）；Rust 不剔 yaml 自带的键。
+
+细节见 `nexau-artifact-builder` 的 `references/llm-config.md` §3.3。
 
 **修法**：`nac llm list-available <pid> --json` 看这个项目到底能用哪些模型，
 `full_name` 就是 `agent.yaml` 里 `llm_config.model` 要填的值。填了集合外的模型会 400
 `model_id is not in the project's visible model set`。
+
+---
+
+## 2026-11 新增症状
+
+### 「模型报 503 UPSTREAM_5XX_CIRCUIT_OPEN」
+- **取证**：响应 body 里的 code 与 `retry_after_secs`；再翻熔断**之前**那几次请求的原文。
+- **判据**：同一模型连续 5 次 5xx 后，平台暂停往它发请求 10 秒，期间直接返回 503，10 秒后放行，模型还坏就再熔断。阈值固定，不能调。
+- **修法**：根因在模型服务，把出错时段和模型原始报错发给模型服务方；调用方按 `retry_after_secs` 等一下重试即可。
+
+### 「工具好像没生效 / 智能体说没有这个工具（MCP）」
+- **取证**：`nac logs <env> --json | jq -r '.response.logs' | grep -iE 'unavailable for this run|connect_tcp|timeout'`
+- **判据**：MCP 由运行时直接连，不受沙箱出网规则管；连不上时这个 MCP 的工具一个都不加载，对话照常进行。
+- **修法**：内网 MCP 请网络管理员放通「平台集群 → MCP 的 IP 和端口」，放通后新开对话就会重连。
+
+### 「工具刚跑完，模型下一步就 400」
+- **取证**：trace 里看那次工具调用返回有多大；模型调用的错误原文。
+- **判据**：工具一次返回太大，塞进上下文后模型 400；之后**同一会话每条都会 400**。
+- **修法**：新开会话；让工具只返回摘要 / 分页。用「长工具输出」中间件时豁免参数名是 `bypass_tool_names`（写成 `bypass_tools` 会在加载时报 `unexpected keyword argument`，智能体起不来），带参数不符合官方制品白名单，默认 `params: {}`。
+
+### 「经网关上传制品或 Skill 失败，405 或一个拦截页」
+- **判据**：没有 NAC 的 `request_id` / `server-timing` 响应头 = 请求没到平台，被平台前面的第三方安全网关拦了。
+- **修法**：整个智能体打成 zip 走「上传新版本」，或直接用平台页面上传；`node_modules` 别带；根治请网关运维加白名单。
+
+### 「HTML 预览是空白 / 图表出不来」
+- **判据**：用户浏览器加载不到外部 CDN 就空白；沙箱里脚本生成的 HTML 不自动出预览卡，在沙箱文件里打开默认安全模式。
+- **修法**：把库内联进 HTML（由生成脚本写入，不要让模型输出）；在沙箱文件里点「允许脚本」。
+
+### 「修了运行时的问题，但老版本还是老样子」
+- **判据**：`nac versions list --json` 看跑的是哪个版本；对旧版本「重新部署」不换运行时镜像。
+- **修法**：运行时侧的修复要发新版本才生效，重新 `nac deploy <env>`。
 
 ---
 
@@ -362,8 +414,8 @@ message 原文 `runtime pod at capacity, please retry shortly`（这里的 "pod"
 **修法**：① 让 agent 去 `read_file` 那个 `stdout.txt` 拿完整输出；
 ② 一开始就别 `cat`，改用 `grep` / `head` / 分段读。
 
-⚠️ **相邻形态**：回复末尾出现 `[Note: Maximum iteration limit reached]` ——
-撞到单轮步数上限被强制收尾了，**不是「想清楚了」**。这个上限（默认 100 轮）在 `agent.yaml` 里你自己能改。
+⚠️ **相邻形态**：回复末尾出现 `[Error: Maximum iteration limit reached.]`（少数路径是 `[Note: Maximum iteration limit reached]`，前面常带字面 `\n\n`）——
+撞到单轮步数上限被强制收尾了，**不是「想清楚了」**；run 状态照样是成功，只能靠这句文字认。这个上限（默认 100 轮）在 `agent.yaml` 里你自己能改。
 
 ---
 

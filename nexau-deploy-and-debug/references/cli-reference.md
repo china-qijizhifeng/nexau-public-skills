@@ -13,13 +13,14 @@ nac [全局 flag] <command> [子命令] [参数]
 |---|---|
 | `--json` | 结构化输出。**排障时基本都要加**——很多命令的表格模式会漏字段（见 `status`） |
 | `--compact` | 极简输出 |
-| `--base-url <url>` | 覆盖平台地址（默认从当前目录 `nac.json` 或 `~/.nac/config.toml` 取） |
+| `--base-url <url>` | 覆盖平台地址。**零配置默认连官方正式环境（https://nac.xiaobei.top）**；0.4.x 实测有效的只有 `--base-url`、环境变量 `NAC_BASE_URL`、`NORTH_ENV=dev`（=alpha）、`nac.json` 里手写的 `base_url`（只在该目录及子目录生效）；`~/.nac/config.toml` 不生效，`auth login --base-url` / `init --base-url` 也不会记住地址。详见 SKILL.md §0.5 |
 | `--project-id <id>` | 覆盖项目 id（默认从 `nac.json` 取） |
 | `--token <t>` | 覆盖凭据。**同时接受 PAT（`nacp_…`）和 `ak:sk`** |
 | `--insecure` | 接受自签证书。仅用于测试环境 |
 
 **当前目录绑定**：`nac init` 会在当前目录生成 `nac.json`，之后这个目录下的命令自动解析
 `--project-id` 和 `--base-url`，不用每次传。
+⚠️ 0.4.x 实测：`nac init --base-url …` **不会**把地址写进 `nac.json`，要自己手动加 `"base_url"`。
 
 **顶层命令（24 个）**：
 `auth` `projects` `versions` `environments` `sessions` `keys` `vars` `llm` `tokens` `channels`
@@ -40,13 +41,13 @@ nac [全局 flag] <command> [子命令] [参数]
 ## 1. 认证
 
 ```bash
-nac auth login                       # 交互粘贴 PAT
-nac auth login --token nacp_xxx      # 非交互（CI）
-nac auth whoami                      # 自检：当前身份 / 平台 / 项目
+nac auth login --pat nacp_xxx        # 非交互（CI）；login 只认 --pat <值>，不带值会报错，全局 --token 会被忽略
+nac auth login                       # 不带参数：交互粘贴 PAT（令牌在控制台个人菜单「访问令牌」自建）
+nac auth whoami                      # 只显示本机存的令牌（打码），不连服务器、不显示地址；自检用 nac api GET /api/auth/me --json（200=对，401=地址或令牌不对）
 nac auth logout                      # 删掉本地凭据
 
 nac tokens list
-nac tokens create <name>             # 新建 PAT，值只显示一次
+nac tokens create <name>             # 新建 PAT，值只显示一次（PAT 的值只在创建时显示；API 密钥的 SK 则可以随时用 nac keys secret <id> 取回）
 nac tokens delete <id>
 ```
 
@@ -104,18 +105,23 @@ Deployment status: success
 
 ### `nac dev`
 
-内环开发：建一个 **1 小时 TTL 的临时泳道**，打包部署，Ctrl+C 自动拆掉。
-不碰持久环境、不进部署历史。
+内环开发：建一个 **1 小时 TTL 的临时泳道**，打包部署（不碰持久环境、不进部署历史）。
 
 ```bash
-nac dev              # 起泳道
-nac dev --watch      # 改文件自动重发
-nac dev --chat       # 就绪后直接进 REPL
+nac dev              # 起泳道（前台常驻，占着终端）
+nac dev --watch      # 设计上是改文件自动重发
+nac dev --chat       # 设计上是就绪后进 REPL
 ```
+
+⚠️ **0.4.3 / 0.4.4**：`--watch` 和 `--chat` 没有实现（参数被忽略），在任何机器上都不会自动重新部署，也不会进对话窗口；
+Ctrl+C 清理临时环境会 409（有 active release），`nac clean` 同样 409。
+**日常推荐改用 `nac environments create --name dev` 一次 + `nac deploy dev --yes` 反复发**，
+手动清理步骤见 SKILL.md §2.6。
 
 ### `nac clean`
 
 清掉超期或被崩溃的 `nac dev` 遗留下来的临时环境。
+⚠️ 0.4.x 实测：临时环境上还有 active 版本时会 409，要先 `nac versions deactivate <id> --confirm` 再 `nac environments delete <名>`。
 
 ```bash
 nac clean --dry-run          # 先看会删什么（当前项目）
@@ -204,10 +210,9 @@ nac logs <env> --json | jq -r '.response.logs'   # 展开成人类可读的多�
 `timestamp` / `logger` / `level` / `trace_id` / `span_id` / `message`（`level` 默认 `INFO`）。
 ⚠️ 没有活跃请求上下文的行，`trace_id` 是 **32 个 0** —— 正常，不是 bug。
 
-### ⚠️⚠️ 三个静默失效的 flag
+### ⚠️⚠️ 三个在 alpha 上不起作用的 flag
 
-`--last` / `--level` / `--grep` **服务端不认识，被静默丢弃**，不报错不警告，
-返回的仍是未过滤的最后 200 行。（`--help` 里那句 "Filters are combined server-side" 已过时。）
+`--last` / `--level` / `--grep`：CLI 会把它们交给服务端过滤，但**在 alpha 平台实测服务端没过滤**（不报错不警告，返回的仍是最后 200 行；别的平台版本没验证）。
 
 **自证**：`nac logs <env> --level error` 与 `nac logs <env>` 输出**逐字相同**。
 
@@ -293,7 +298,7 @@ Smoke test: <project_id> (staging)
 **退出码有区分度，可直接进 CI**：`0` 通过 / `1` 失败（含建 session 失败）/ **`2` 超时**。
 
 其它 flag：`-m/--message`（默认 `ping`）、`--agent <name>`（多 agent 制品必须给）、`--timeout <秒>`、
-`--var KEY=VALUE`（可重复）、`--sandbox-env KEY=VALUE`、`--template KEY=VALUE`、`--env-file <path>`。
+`--var KEY=VALUE`（可重复）、`--sbx-env KEY=VALUE`、`--tmpl-var KEY=VALUE`、`--vars-file <path>`。
 
 ⚠️ **环境名一定要写**（省略回落到字面 `default`，见 §0）。
 
@@ -330,9 +335,9 @@ nac test staging --bail --json     # 首个失败即停，CI 快速卡口
 
 ```bash
 nac vars list <pid> --json
-nac vars set KEY=VALUE
-nac vars delete KEY
-nac vars sync --from .env          # 从本地 .env 灌进项目（因为 .env 本身不会被打包）
+nac vars set <KEY> <VALUE>
+nac vars delete <KEY>
+nac vars sync .env          # 从本地 .env 灌进项目（因为 .env 本身不会被打包）
 
 nac llm show
 nac llm list-available <pid> --json    # 有哪些模型可用；full_name 就是 agent.yaml 里要填的值
@@ -380,13 +385,13 @@ nac api GET  "/api/projects/$PID/environments/prod/logs?tail=2000&trace_id=$TID"
 
 ```bash
 nac sessions list                 # 列项目的会话
-nac chat <env>                    # 交互 REPL
-nac chat <env> -m "一句话"        # 单轮
-nac chat <env> --session <sid>    # 续上已有会话
-nac chat <env> --distinct-id <id> # 续别处（如 Web UI）建的 session 时，必须给建它时用的那个 id
-nac chat <env> --agent <name>     # 多 agent 制品必须给
-nac chat <env> --var K=V --sandbox-env K=V --template K=V --env-file .env.local
+# 交互 REPL（nac chat <env> 不带 -m）：0.4.x 加不加 --json 都会因中文工具结果 panic，不要用；用下面的 -m/--stdin + --json
+nac chat <env> -m "一句话" --json   # 单轮（或 --stdin --json）；读 .content
+nac chat <env> --session <sid> -m "…" --json    # 续上已有会话
+nac chat <env> --distinct-id <id> -m "…" --json # 续别处（如 Web UI）建的 session 时，必须给建它时用的那个 id
+nac chat <env> --agent <name> -m "…" --json     # 多 agent 制品必须给
+nac chat <env> --var K=V --sbx-env K=V --tmpl-var K=V --vars-file .env.local -m "…" --json
 ```
 
-三种变量通道的区别（`--var` 运行时变量 / `--sandbox-env` 注入沙箱环境变量 / `--template`
+三种变量通道的区别（`--var` 运行时变量 / `--sbx-env` 注入沙箱环境变量 / `--tmpl-var`
 系统提示词的模板值）属于制品侧语义，细节见 `nexau-artifact-builder`。

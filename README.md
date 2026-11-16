@@ -11,7 +11,8 @@
 | skill | 做什么 | 什么时候用 |
 |---|---|---|
 | [`nexau-artifact-builder`](nexau-artifact-builder/) | NAC / NexAU Agent 制品（Artifact）开发指南：制品结构与打包硬约束、`agent.yaml` 完整契约与校验强度、内置工具与自定义工具、Skill 设计与 Agentic Search、MCP 与子代理、中间件与内容安全护栏、环境变量与密钥注入、运行时路径边界、错误速查，以及 10 个可直接复制改造的实战模板 | 创建 Agent、写 `nexau.json` / `agent.yaml` / `tool.yaml`、开发自定义工具、打包上传制品、或制品行为不符合预期时 |
-| [`nexau-deploy-and-debug`](nexau-deploy-and-debug/) | 把制品部署到 NAC 平台并在出问题时定位原因：两种凭据的边界与自检、PAT 权限矩阵（什么需要管理员）、部署与版本命令全表、发布与回滚节奏、受保护环境、六步排障次序与 28 条症状索引、错误码与 message 速查、平台限制的精确数值与自测方法、会骗人的「假绿」判据清单 | 部署上线、配环境变量与密钥、回滚、查日志与 trace、收到 4xx/5xx 不知道什么意思、或怀疑某个「成功」是假的 |
+| [`nexau-deploy-and-debug`](nexau-deploy-and-debug/) | 把制品部署到 NAC 平台并在出问题时定位原因：两种凭据的边界与自检、PAT 权限矩阵（什么需要管理员）、部署与版本命令全表、发布与回滚节奏、受保护环境、六步排障次序与 34 条症状索引、错误码与 message 速查、平台限制的精确数值与自测方法、会骗人的「假绿」判据清单 | 部署上线、配环境变量与密钥、回滚、查日志与 trace、收到 4xx/5xx 不知道什么意思、或怀疑某个「成功」是假的 |
+| [`nac`](nac/) | NAC 命令行 `nac` 的用法：安装、先配平台地址、两种凭据（访问令牌 / API 密钥）怎么拿怎么用、项目 / 版本 / 环境 / 密钥 / 变量的增删改查、部署与对话测试、日志与 trace，以及 0.4.x 已知问题与绕法 | 用命令行部署、对话测试、查日志，或命令报错不知道原因时 |
 
 ## 怎么引用
 
@@ -34,7 +35,7 @@ git clone --depth 1 https://github.com/china-qijizhifeng/nexau-public-skills.git
 git clone --depth 1 --filter=blob:none --sparse \
   https://github.com/china-qijizhifeng/nexau-public-skills.git
 cd nexau-public-skills
-git sparse-checkout set nexau-artifact-builder nexau-deploy-and-debug
+git sparse-checkout set nexau-artifact-builder nexau-deploy-and-debug nac
 ```
 
 ### 给 AI agent 使用

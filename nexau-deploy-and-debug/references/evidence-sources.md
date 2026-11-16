@@ -163,9 +163,10 @@ curl -s "$BASE/agent-api/sessions/$SID/actions?limit=50" -u "$AK:$SK" | jq .
 
 三条语义值得单独记：
 
-- **`MODEL_FALLBACK`**：请求里指定的模型不可用时，平台**不报错**，回落到 agent 默认模型继续跑，
+- **`MODEL_FALLBACK`**：**chat 请求体里的 `override_llm_configs` 覆盖**不可用时，平台不报错，回落到 agent 默认模型继续跑，
   只在 `RUN_STARTED` **之前**发一次 `{requested_model, effective_model, message}`。
-  ⇒ **「我指定了模型但好像没生效」的唯一线索就是它。**
+  （`agent.yaml` 的 `model` 写错走另一条路：**不发**此事件；是否回落、怎么回落按运行时不同，见 `symptom-index.md` 模型一节。）
+  ⇒ **只对 chat 请求里的 `override_llm_configs` 覆盖成立：这时「我指定了模型但好像没生效」的唯一线索就是它。**
 - **`TRANSPORT_ERROR` 是复用类型**：带 `reason: "sandbox_at_capacity"` + `retry_after`（整数秒，
   默认 5）时是**容量问题、按秒重试即可，不是你的代码错**；不带 `reason` 才是真的传输 / 执行异常。
 - **`COMPACTION_STARTED` / `COMPACTION_FINISHED`**：上下文接近上限触发了自动压缩。看到它说明

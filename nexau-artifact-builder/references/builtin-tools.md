@@ -4,7 +4,7 @@
 > **什么时候读**：在给 `agent.yaml` 的 `tools:` 列表挑工具、抄 `binding` 串、或写自己的 `.tool.yaml` 时读。
 > **不覆盖**：自定义工具（custom_tools）的 Python 函数契约（进程边界 / 注入参数 / 返回值）见 `references/custom-tools.md`；MCP 工具见 `references/mcp-and-subagents.md`。
 
-事实源：NexAU SDK `0.5.0`。文中所有结论都以该版本的实际运行行为为准。
+事实源：NexAU SDK（版本号未核，见 SKILL.md 开头）。文中所有结论都以实际运行行为为准。
 
 ---
 
@@ -96,6 +96,24 @@
 ⚠️ **名字带 Google，实现是 Serper**，不是 Google 官方 Search API。key 走 runtime scope 环境变量注入（见 `references/env-vars-and-secrets.md`）。
 
 结论：离线 / 气隙部署 **两个都别挂**（没出网）；有出网但没买 Serper key 的环境，**`WebFetch` 可以挂，`WebSearch` 不要挂**。
+
+#### 2.3.1 聚合搜索 `web_search`（多服务商，推荐：联网搜索用它 + 豆包）
+
+- **联网搜索 = `web_search`，联网检索 = `web_fetch`**；`web_read` 基本用不到。
+- 新版 NexAU（2026-07-30 起）内置聚合搜索：binding `nexau.archs.tool.builtin.web_tools:web_search`，
+  服务商由环境变量切换，不再只有 Serper：
+
+| 变量 | 说明 |
+|---|---|
+| `SEARCH_PROVIDER` | `Serper` / `Seed`（=豆包搜索，也认「豆包」）/ `Baidu` / `XiaoBei`（北坡聚合），默认 Serper |
+| `SEARCH_API_KEY` | 当前服务商的 key，四家共用这一个变量（新版也兼容旧的 `SERPER_API_KEY`） |
+| `SEARCH_ENGINE` / `SEARCH_BASE_URL` / `SEARCH_TIMEOUT` / `SEARCH_MAX_RETRIES` | 可选 |
+
+- ⚠️ **运行时版本**：部分较早的平台版本（如 v0.8.x）带的 NexAU 没有内置版 → 用 nexau-cookbook「聚合搜索/websearch_agent」里的
+  `custom_tools/aggregated_websearch.py` 自带代码（binding `custom_tools.aggregated_websearch:aggregated_websearch`，只依赖 httpx），环境变量相同，各版本都能跑。
+- **豆包搜索（Seed）key**：不写在本 skill 里（本 skill 可对外分享）。请向平台管理员获取；配成项目环境变量 `SEARCH_API_KEY` 并勾密文，**别写进制品包**。
+  上游 `POST https://open.feedcoopapi.com/search_api/web_search`，`Authorization: Bearer <key>`；失败也回 HTTP 200（错误在 `ResponseMetadata.Error`）；喂模型用 Summary 不用 Snippet。
+- **出网白名单**：平台开了出网白名单（默认拒绝）时，要放行 `open.feedcoopapi.com:443` 和 `web_fetch` 要读的站点，否则工具报 403 `POLICY_DENY_RULE`。
 
 ### 2.4 session_tools（4 个）
 

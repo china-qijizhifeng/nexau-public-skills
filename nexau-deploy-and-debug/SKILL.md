@@ -16,7 +16,9 @@ description: >-
   shell 输出被截断 / Maximum iteration limit reached / 制品 100MB / 符号链接丢失 /
   沙箱文件下次就没了 / apt 装的包没了 / 连不上内网服务 / 出网白名单 / IPv6 不通 /
   临时环境到期突然全 403 / trace 显示 encrypted / Langfuse not configured /
-  request_id 与 trace id 怎么拿 / 报障要带什么。
+  request_id 与 trace id 怎么拿 / 报障要带什么 /
+  这个报错是哪一边的 / 是前置网关还是 NAC 的问题 / 模型服务报错 / 经网关调用报错
+  （前置网关在前、NAC 在后、模型与沙箱在更后面时，判断报错归谁）。
   涵盖：两种凭据的边界与自检、部署与版本命令全表、发布与回滚节奏、受保护环境与不可逆操作、
   排障固定次序、九个证据面的取证方法与输出形状、症状速查、错误码与错误原文速查、
   平台限制与自测法、报障清单，以及一份「会骗你的判据」清单。
@@ -37,18 +39,91 @@ description: >-
 
 | 我要做什么 | 去哪 |
 |---|---|
-| **第一次上手，先搞清楚我有没有权限做这件事** | 本文 §1（**必读，它决定后面一半内容你能不能用**） |
+| **第一次上手：装 nac、配地址、分清两把钥匙** | 本文 §0.5 |
+| **先搞清楚我有没有权限做这件事** | 本文 §1（**必读，它决定后面一半内容你能不能用**） |
+| 推荐的「改 → 部署 → 验证」循环、`nac dev` 的坑 | 本文 §2.6 |
 | 部署 / 回滚 / 建环境 / 删环境 | 本文 §2 |
 | 出问题了，不知道从哪下手 | 本文 §3 的六步次序 → §4 症状表 |
 | **「我这把 PAT 能做什么 / 这件事是不是要管理员」** | `references/pat-permissions.md`（含全部 CLI 命令的权限档位表） |
 | 查某个具体命令的参数和输出 | `references/cli-reference.md` |
 | 想知道某份证据（日志 / trace / `/runs` / SSE）里到底有什么、怎么读 | `references/evidence-sources.md` |
-| 「我遇到的现象是 X」 | `references/symptom-index.md`（27 条，按使用者会说的话索引） |
+| 「我遇到的现象是 X」 | `references/symptom-index.md`（按使用者会说的话索引，含 2026-11 新增 6 条） |
 | 打包 / 上传制品被拒、包里少了东西 | `references/cli-reference.md` §2 + `references/platform-limits.md` §1 + `references/error-codes.md`「制品上传」 |
 | 「我收到了 4xx/5xx，这个码什么意思」 | `references/error-codes.md`（含 message 原文速查） |
+| **「这个报错是谁的：前置网关 / NAC / 模型服务 / 沙箱」**（经网关调用时尤其要先看这个） | 本文 §4 与「第 1.5 步」 |
 | 「这个东西有没有上限 / 撞到会怎样 / 能不能调」 | `references/platform-limits.md` |
 | 报障要准备什么 | 本文 §5 |
 | 我怀疑某个「绿」是假的 | 本文 §6（会骗你的判据清单） |
+
+---
+
+## 0.5 部署前三件事（先做完再往下，0.4.x 实测）
+
+**结论：装 nac → 先配平台地址（不配就是连正式环境）→ 分清两把钥匙。** 这三件没做对，后面的报错都会很难看懂。
+
+### ① 装 nac：一定用 `| bash`，别用 `| sh`
+
+```bash
+# macOS / Linux（必须 bash）
+curl -fsSL https://download.xiaobei.top/nac-cli/install.sh | bash
+# Windows PowerShell（装到 %LOCALAPPDATA%\Programs\nac 并自动加 PATH，不需要管理员）
+irm https://download.xiaobei.top/nac-cli/install.ps1 | iex
+
+curl -fsSL https://download.xiaobei.top/nac-cli/install.sh | NAC_VERSION=0.4.4 bash          # 指定版本（变量放在 bash 前面）
+curl -fsSL https://download.xiaobei.top/nac-cli/install.sh | NAC_INSTALL_DIR=$HOME/bin bash   # 指定安装目录
+nac --version
+```
+
+- 脚本开头有 `set -o pipefail`，Ubuntu 上 `sh` 是 dash，会报 `Illegal option -o pipefail`，装不上。
+  ⚠️ 脚本里自己的注释和装完后的提示写的是 `| sh`，**那是错的，照上面用 bash**。
+- `download.xiaobei.top` 是公开下载地址；私有化部署的用户换成交付方给你的下载地址。
+- 写本文时 latest 是 0.4.4。
+
+### ② 先配平台地址：零配置默认连**官方正式环境（https://nac.xiaobei.top）**
+
+`nac` 不告诉它连哪就连默认的正式环境。把下面这行写进 `~/.bashrc` / `~/.zshrc`（下文用 alpha 公开地址做示例，**换成你自己部署的地址**）：
+
+```bash
+export NAC_BASE_URL=https://nac-alpha.xiaobei.top
+nac api GET /api/auth/me --json   # 自检：200 = 令牌属于这个平台；401 = 地址或令牌不对
+# 注意 nac auth whoami 只显示本机存的令牌（打码），不连服务器、不显示地址，不能用来自检
+```
+
+0.4.x 实测，**哪些写法有效、哪些没用**：
+
+| 写法 | 结果 |
+|---|---|
+| `--base-url <url>`（每条命令都带） | ✅ 有效 |
+| 环境变量 `NAC_BASE_URL` | ✅ 有效，推荐（⚠️ 它和 `NORTH_ENV` 都会盖掉 `nac.json` 里的 `base_url`；写进 bashrc 后项目里的地址就不起作用了） |
+| 环境变量 `NORTH_ENV=dev` | ✅ 有效（等于 alpha，仅官方环境） |
+| 项目目录 `nac.json` 里**手写** `"base_url"` | ✅ 只在该目录及子目录生效 |
+| `nac auth login --base-url …` | ❌ 不会记住地址（只存了令牌） |
+| `nac init --base-url …` | ❌ 不会写进 `nac.json`，要手动加 |
+| `~/.nac/config.toml`（试了五种写法） | ❌ 都不生效，别在这上面耗时间 |
+
+### ③ 两把钥匙，各管各的（详见 §1）
+
+| 钥匙 | 长相 | 用在哪 |
+|---|---|---|
+| 访问令牌（PAT） | `nacp_…`，代表你本人 | 管理命令：`deploy` / `versions` / `environments` / `logs` / `traces`。控制台个人菜单「访问令牌」自建，`nac auth login` 不带参数交互粘贴，或 `nac auth login --pat <令牌>`（Linux 存系统密钥环） |
+| API 密钥 | `ak_xxx:sk_xxx`，代表**一个项目**（新项目自带 `default`） | 只用于对话：`nac chat` / `smoke` / `test` / `bench` |
+
+拿 API 密钥：`nac keys list` 取 id 和 access_key；`nac keys secret <id>` **只返回 secret_key**，要自己拼成 `access_key:secret_key`。
+
+**只写在单条对话命令前面，不要 export 成全局变量**：
+
+```bash
+NAC_TOKEN="ak_xxx:sk_xxx" nac chat dev -m "你好" --json
+```
+
+用错的报错（0.4.x 实测）：
+
+| 做法 | 报错 |
+|---|---|
+| `chat` / `smoke` 用了访问令牌（PAT） | `400 Missing X-Project-Id header` |
+| 管理命令（`deploy` / `versions` …）被全局的 `NAC_TOKEN=ak:sk` 顶掉 | `401 Unknown error`（不是 403，看不出原因） |
+
+⇒ 管理命令用 PAT，对话命令才临时带 AK:SK；`NAC_TOKEN` 别长期留在 shell 里。
 
 ---
 
@@ -58,13 +133,13 @@ description: >-
 
 | 凭据 | 请求头写法 | 能打哪个面 | 怎么拿 |
 |---|---|---|---|
-| 项目 **AK/SK** | `Authorization: Basic base64(ak:sk)` | **只有对话面** `/agent-api/*`：`chat` / `sessions` / `runs` / `actions` / `events` / `files`；CLI 的 `nac chat` / `smoke` / `test` / `bench` | 创建项目时一次性弹出，**SK 只显示一次**；错过了到 项目 → 配置 页重新获取 |
-| 个人令牌 **PAT** | `Authorization: Bearer nacp_…`（打对话面时**还必须**带 `X-Project-Id: <项目 uuid>`） | **管理面** `/api/*` 全部：`deploy` / `versions` / `environments` / `logs` / `traces` / `vars` / `status` / `api`；也能读对话面 | `nac auth login`（交互粘贴），或 `nac tokens create <名字>` |
+| 项目 **AK/SK** | `Authorization: Basic base64(ak:sk)` | **只有对话面** `/agent-api/*`：`chat` / `sessions` / `runs` / `actions` / `events` / `files`；CLI 的 `nac chat` / `smoke` / `test` / `bench` | SK 可随时用 `nac keys secret <id>` 取回（只返回 secret_key，要和 `nac keys list` 里的 access_key 拼成 ak:sk），也可以在控制台显示密钥 |
+| 个人令牌 **PAT** | `Authorization: Bearer nacp_…`（打对话面时**还必须**带 `X-Project-Id: <项目 uuid>`） | **管理面** `/api/*` 全部：`deploy` / `versions` / `environments` / `logs` / `traces` / `vars` / `status` / `api`；也能读对话面 | `nac auth login --pat nacp_xxx`（或不带参数交互粘贴），在控制台个人菜单「访问令牌」自建，或 `nac tokens create <名字>` |
 
 ```bash
-nac auth whoami          # 自检：当前是谁、连的哪个平台、项目是哪个
+nac auth whoami          # 只显示本机存的令牌（打码），不验证平台；自检用 nac api GET /api/auth/me --json
 nac auth login           # 交互粘贴 PAT
-nac auth login --token nacp_xxx      # 非交互（CI）
+nac auth login --pat nacp_xxx        # 非交互（CI）；nacp_xxx 换成你自己的令牌（login 只认 --pat，全局 --token 会被忽略、退回等标准输入粘贴）
 nac tokens list / create <name> / delete <id>
 ```
 
@@ -78,6 +153,8 @@ nac tokens list / create <name> / delete <id>
 3. **PAT 和 AK/SK 读同一个 session 的可见范围不一样**：AK/SK 只校验「session 属于本项目」，
    PAT 还额外校验「发起人是我」（比对建 session 时的 `distinct_id`）⇒ 同一个 session
    AK/SK 读得到、PAT 读 `404 session not found`。**这不是 session 丢了**，见 §4。
+
+⚠️ 0.4.x 实测：如果 shell 里全局设了 `NAC_TOKEN=ak:sk`，管理命令返回的是 **`401 Unknown error`**（不是上面的 403）——同样是「拿 AK/SK 打了管理面」。
 
 给 CLI 临时换凭据：`nac --token "ak_xxx:sk_xxx" smoke staging`（`--token` 同时接受 PAT 和 `ak:sk`）。
 
@@ -114,15 +191,11 @@ nac tokens list / create <name> / delete <id>
 | 打包 + 建版本 + 上传 + 部署 + 等终态 | `nac deploy <env>` |
 | **回滚**（切回**本环境**的一个老版本，不重新打包） | `nac deploy <env> --promote <version_tag>` |
 | 直接部署一个已存在的版本 id | `nac versions deploy <version_id> <env>` |
-| 本地内环开发（1 小时临时泳道，Ctrl+C 自动拆） | `nac dev`（`--watch` 改文件自动重发，`--chat` 起 REPL） |
+| 本地内环开发（1 小时临时泳道） | `nac dev`（⚠️ 0.4.x 实测问题不少，**日常推荐 §2.6 的 `environments create` + `deploy` 循环**） |
 | 清掉残留的临时环境 | `nac clean --dry-run` → `nac clean`（`--all` 扫所有项目） |
 | 看版本列表 / 状态 | `nac versions list --json`（`status`：`pending`/`deploying`/`active`/`failed`/`superseded`） |
-
-⚠️⚠️ **上面这些「拿已有版本去部署」的写法都只在本环境内成立。**
-平台**没有**跨环境通路：要把预发验过的东西发到生产，必须**把制品重新上传部署一次**
-（`nac deploy production`），在生产环境下产生一条新的 Version。
 | 启用 / 停用版本 | `nac versions activate <vid>` / `deactivate <vid>`（已绑环境时要 `--confirm`） |
-| **无损重启**当前版本（不换版本、不重新打包） | `nac versions redeploy <vid>` |
+| **无损重启**当前版本（不换版本、不重新打包） | `nac versions redeploy <vid>`（⚠️ 对旧版本重新部署**不会换运行时镜像**，见 §4「修了运行时问题但老版本还在」） |
 | 看 / 改某版本的副本上下限 | `nac versions scaling <vid>` / `nac versions scaling <vid> --min 1 --max 5` |
 | 直接把副本数拨到 N | `nac versions scale <vid> <N>` |
 | 看环境与当前指向 | `nac status --json` ⚠️、`nac environments list`、`nac environments releases <env>` |
@@ -131,6 +204,10 @@ nac tokens list / create <name> / delete <id>
 | trace | `nac traces --last 1h` / `nac trace <id>` / `nac trace <id> --export -o t.json` |
 | 冒烟 / 用例套件 / 压测 | `nac smoke <env>` / `nac test <env>` / `nac bench <env>` |
 | 打任何后台接口（逃生舱） | `nac api GET/PUT/POST/DELETE <path> --body '<json>'` |
+
+⚠️⚠️ **上面这些「拿已有版本去部署」的写法都只在本环境内成立。**
+平台**没有**跨环境通路：要把预发验过的东西发到生产，必须**把制品重新上传部署一次**
+（`nac deploy production`），在生产环境下产生一条新的 Version。
 
 ⚠️ **`nac status` 的表格输出只有 Environment / Type / Expires At / Created 四列，看不到「指向哪个版本」** ——
 要看部署必须 `--json` 读 `current_release_id`。
@@ -174,7 +251,7 @@ Deployment timed out after 10m waiting for version <vid> (last status: deploying
 
 ### 2.3 推荐的发布节奏
 
-1. **内环**：`nac dev`（临时泳道，不碰持久环境、不进部署历史）→ Playground 里点着试。
+1. **内环**：建一个固定的开发环境，改完 `nac deploy dev --yes` → 用 `nac chat dev -m … --json` 验证，聊天窗口用控制台试验场（做法见 §2.6）。`nac dev` 在 0.4.x 上有几处坑（同节），不作为默认推荐。
 2. **预发**：`nac deploy staging` → `nac smoke staging` →（有套件就）`nac test staging --bail` →
    看 `nac traces --last 1h` 的错误与延迟。
 3. **上线**：把预发验过的那份制品**重新上传部署**到生产 —— `nac deploy production`。
@@ -213,7 +290,7 @@ nac api PUT "/api/projects/$PID/versions/$VID/deploy" \
 | 操作 | 守卫 | 你会看到什么 |
 |---|---|---|
 | **临时环境到期** | ❌ **无任何守卫** | 到点自动停服务 + 下线 + 软删，**无确认无宽限**。症状是「代码没动过突然全部 403/404」。判据 `nac environments list --json` 有没有 `expires_at`，或 `nac status` 看 `Type`=`ephemeral`。**生产不要用临时环境** |
-| **SK 泄露 / 丢失** | ❌ 不可找回 | 只在创建时显示一次；丢了只能重新获取一把新的 |
+| **SK 泄露 / 丢失** | 可找回 | SK 可随时用 `nac keys secret <id>` 取回；泄露了就 revoke 再建一把 |
 | **隐私域 passphrase 忘记** | ❌ 不可找回 | 平台**不存储**它。忘了之后 agent 照常运行、加密写入不受影响，但**永久失去「解锁查看 / 关闭隐私域 / 轮换口令」** |
 | **`stop` 传 `force: true`** | ❌ 半截内容不落盘 | 已流出的思考、半截回复、半截工具参数全部找不回。默认 `false`（优雅停止），**不要改** |
 | 删项目 | ✅ 要手打项目名；有 active 版本时 409 | 409 消息会直接告诉你先停用哪几个版本 |
@@ -221,6 +298,62 @@ nac api PUT "/api/projects/$PID/versions/$VID/deploy" \
 | 删版本 | ✅ active 时 400、有运行实例时 409 | **是软删**，制品对象不清理（多个环境可能共享同一份）⇒「删了省空间」这个预期是错的 |
 | 对受保护环境做写操作 | ✅ 必须 `confirm: true` | 见 §2.4 |
 | 同一环境并发部署 | ✅ 409 | `environment <id> already has deploy operation <op-id> in progress`。串行化你的流水线；执行方异常中断时该占用约 15 分钟后自动失效 |
+
+### 2.6 推荐的部署-验证循环，以及 `nac dev` 的坑（0.4.x 实测）
+
+**结论：建一个固定的开发环境，之后反复 `nac deploy dev --yes`，每次十几秒到半分钟；别靠 `nac dev --watch`。**
+
+```bash
+# 一次性：建开发环境（持久环境，不会 1 小时后消失）
+nac environments create --name dev
+
+# 每次改完（提示词 / 配置 / 工具 / skill 都要重新部署才生效）
+nac deploy dev --yes
+
+# 冒烟：真发一轮对话（对话命令用项目 API 密钥，只写在这一条前面）
+NAC_TOKEN="ak_xxx:sk_xxx" nac smoke dev --json
+
+# 对话：一律加 --json，读 .content
+NAC_TOKEN="ak_xxx:sk_xxx" nac chat dev -m "你好" --json | jq -r '.content'
+# 工具调用在 .messages[].tool_calls（没有顶层 tool_calls，也没有 trace_id）
+# 想查链路：拿返回里的 session_id，去 `nac traces` 输出的 Session 列里对
+
+# 看 trace：每次模型调用、工具入参与返回都在里面
+nac traces --last 1h
+nac trace <trace_id> --export --json -o t.json
+
+# 看运行日志：alpha 实测服务端没按 --level / --grep 过滤（CLI 有传；其他平台未验证），用 --json 后自己滤
+nac logs dev --json | jq -r '.response.logs' | grep -v '"DEBUG"'
+```
+
+几条 0.4.x 实测的细节：
+
+- **0.4.x 的交互模式（`nac chat <env>` 不带 `-m`）加不加 `--json` 都会崩，不要用**（工具结果按 80 字节截断，落在汉字中间就 panic）。对话一律 `nac chat <env> -m "…" --json`（或 `--stdin --json`），读 `.content`；要聊天窗口就用控制台试验场。
+- 写进 bashrc 的 `NAC_BASE_URL` 会盖掉 `nac.json` 的 `base_url`。
+- `nac deploy` 过程中出现 `warning: unable to fetch deploy logs (404)` 可以忽略。
+- `nac deploy` 打的版本标签是时间戳，**不读项目里的 `VERSION` 文件**。
+- 制品相关的小事：自定义工具要返回 `{"content": ...}`；声明了 skills 后 `LoadSkill` 自动注入；
+  提示词里「skills 根目录位于 /home/user/.skills/」这句照抄（控制台构建检查按原句找，命令行部署不强制）；
+  需要固定输出格式时在 skill 里写「模板前后不要加别的话」；不写 `llm_config.model` 就跟随项目默认模型。
+
+**`nac dev` 的实际问题（0.4.3 / 0.4.4）**：
+
+| 现象 | 说明 |
+|---|---|
+| 一直占着终端 | 前台常驻，要另开终端干别的 |
+| `--watch` 不生效 | 0.4.x 里 `--watch` 和 `--chat` 没有实现（参数被忽略），在任何机器上都不会自动重新部署，也不会进对话窗口；改提示词 / 配置 / 工具都**不会**重新部署 |
+| `--chat` 不进对话窗口 | 同上，没有实现；聊天用控制台试验场，或 `nac chat -m … --json` |
+| Ctrl+C 清理临时环境失败（409） | 报「有 active release」；`nac clean` 同样 409 |
+
+**手动清理 `nac dev` 留下的临时环境**（先 `nac clean --dry-run` 看看）：
+
+```bash
+nac versions list --json | jq -r '.[] | select(.status=="active") | [.id,.tag] | @tsv'   # 找名字带 __dev__- 的 active 版本
+nac versions deactivate <version_id> --confirm
+nac environments delete <临时环境名>
+```
+
+（`jq` 字段名以你本机 `nac versions list --json` 的实际输出为准；没有 jq 就肉眼找 `__dev__-` 开头、状态 active 的那条。）
 
 ---
 
@@ -245,6 +378,10 @@ curl -i -X POST "$BASE/agent-api/chat" -u "$AK:$SK" -d '...' 2>&1 | grep -iE 'se
 - **`request_id`** ← 只在**错误响应体**里（`error.request_id`，`req_` 开头 26 位），每次错误都是新的。
   **你自己反查不了它**，它的唯一用途是报障（§5）。
 - **`session_id`** ← 你发起对话时用的那个。
+
+### 第 1.5 步：经前置网关调用时，先问「这个请求到没到 NAC」
+
+看响应：有 `server-timing` 头或 `req_…` 或 NAC 信封 = 到了 NAC；没有 `request_id`、没有 `server-timing` = 请求没到平台，是前置网关自己拒绝的，先找网关方，不要在 NAC 里查。
 
 ### 第 2 步：看 HTTP 状态码 + `message` 原文，**不要看 `code`**
 
@@ -299,7 +436,7 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
 
 ---
 
-## 4. 症状速查（完整版 27 条见 `references/symptom-index.md`）
+## 4. 症状速查（完整版 34 条见 `references/symptom-index.md`；表中从「503 熔断」起的 6 行为 2026-11 新增，已同步进完整版「2026-11 新增症状」一节）
 
 | 你会怎么说 | 第一手证据 | 一句判据 |
 |---|---|---|
@@ -312,6 +449,7 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
 | 「偶尔失败，重试就好」 | 看是 409/`LOCK_CONFLICT` 还是 429 还是 `TRANSPORT_ERROR` | **偶发 = 自己并发；短时间成片（几十上百次）几乎一定是上游故障 → 报障** |
 | 「第一次调用特别慢」 | `curl -i` 看 `x-nac-cold-start: true` | 有这个头 = 冷启动，**不是你的 agent 慢**。首字节超时放宽到 3 分钟以上 |
 | 「超时了」 | 先分清流式 / 非流式 | `stream:false` 有约 300 秒硬超时且**返回 500 不是 504**；`stream:true` 没有整体超时。改流式再打一次就能证伪 |
+| 「报错不知道是前置网关、NAC 还是模型的」 | 先存原始响应；看有没有 `server-timing` / `req_`；`RUN_ERROR` 里 `Error code: <N>` 的 `<N>` | 没有 `request_id` / `server-timing` = 没到平台，是前置网关自己拒绝的；模型 4xx 是**我们**的请求问题；`Connection error.` / `UPSTREAM_REQUEST_FAILED` 不归属 |
 | 「返回 429」 | 响应头 `Retry-After` + `x-nac-capacity-trace-id` | 容量拒绝，**这一轮没被执行**。按 `Retry-After` 退避并复用同一 `session_id`；想控制排队用请求头 `X-Max-Queue-Wait: <秒>` |
 | 「401/403 但凭据我确认是对的」 | `message` 原文 | 见 §1 三条边界 + `references/error-codes.md` 的原文速查表 |
 | 「`404 session not found`，可它明明存在」 | 换**项目 AK/SK** 再请求一次 | 读得到 = 凭据类型口径差异（PAT 多校验一层「发起人是我」）；仍读不到 = 用错项目的 AK/SK |
@@ -322,7 +460,13 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
 | 「界面里能跑，我自己调 API 就不行」 | Playground 的 `API` 按钮导出脚本逐字段对比 | 重点看路由字段：`version_tag` 优先级**高于** `environment`，两个都传时 `environment` 被**静默忽略**；导出脚本**不含** `agent` 字段（多 agent 制品照抄会 400） |
 | 「界面永远停在『生成中』」 | 数一下你的解析器认几个终态帧 | 终态帧有 **5 个**：`RUN_FINISHED` / `RUN_ERROR` / **`RUN_STOPPED`** / `LOCK_CONFLICT` / `TRANSPORT_ERROR`。漏掉 `RUN_STOPPED` 就永远不退出循环 |
 | 「聊到一半无缘无故断线重连」 | `curl -N` 肉眼看流里有没有 `: heartbeat` | 以 `:` 开头的是保活注释行，**必须忽略**。标准 SSE 客户端不会踩，手搓 `split('\n')` 的会 |
-| 「我指定了模型，好像没生效」 | 流里找 `MODEL_FALLBACK` | 指定模型不可用时平台**不报错**，回落默认模型继续跑，只在 `RUN_STARTED` 之前发一次这个事件 |
+| 「我指定了模型，好像没生效」 | 先分清「谁指定的」：① chat 请求体里的 `override_llm_configs` 覆盖（旧字段名 `llm`，开了去别名开关的环境带旧名会被 400 拒绝） → 流里找 `MODEL_FALLBACK`；② `agent.yaml` 的 `model` 写错 → 流里**没有**该事件，看 runtime 日志与 `LLM_PROVIDER_UNROUTABLE` | 见 `references/symptom-index.md`「模型没生效」一节：①覆盖不可用 = 回落默认并发 `MODEL_FALLBACK`（解析环节失败则 422 `LLM_OVERRIDE_UNAVAILABLE`）；②制品 `model` 无对应卡片 = 不发事件，按运行时分：Rust 运行时有可见卡且已注入 `LLM_MODEL` 才回落（只换 model/api_type/连接，yaml 写了的采样参数保留）；默认的 Python 运行时部署期不回落，通常每次 chat 422 `LLM_PROVIDER_UNROUTABLE` |
+| 「模型报 503 UPSTREAM_5XX_CIRCUIT_OPEN」 | 响应 body 里的 code；再翻熔断**之前**那几次请求的原文 | 同一模型**连续 5 次 5xx 后，平台暂停往它发请求 10 秒**，期间直接返回 503（`retry_after_secs` 是还要等几秒），10 秒后放行，模型还坏就再熔断（阈值固定、不能调）。**熔断只是结果，根因在模型服务**：去看前面那 5 次 5xx 的原文，找模型服务方；调用方按 `retry_after_secs` 等一下重试即可。|
+| 「工具好像没生效 / 智能体说没有这个工具（MCP）」 | 运行时日志里搜连接超时（如 `connect_tcp` / `timeout`）：`nac logs <env> --json \| jq -r '.response.logs' \| grep -iE 'mcp\|connect_tcp\|timeout'` | MCP 由运行时直接连，**不受沙箱出网规则管**；连不上时**这个 MCP 的工具一个都不加载**，对话照常进行，表现是「没这个工具」而不是工具报错。内网 MCP 要请网络管理员放通「平台集群 → MCP 的 IP 和端口」，放通后新开对话就会重连。日志搜 `unavailable for this run` 和 `connect_tcp` |
+| 「工具刚跑完，模型下一步就 400」 | trace 里看那次工具调用返回有多大；模型调用的错误原文 | 工具**一次返回太大**，塞进上下文后模型直接 400。让工具只返回摘要 / 分页，大内容落文件让智能体按需读。若用了平台的「长工具输出」中间件，豁免工具的参数名是 **`bypass_tool_names`**（写成 `bypass_tools` 会在加载时报 `unexpected keyword argument`，智能体起不来）；带参数不符合官方制品规范白名单（见 nexau-artifact-builder 的 artifact-spec-checklist §9.3），默认写 `params: {}`。另外：工具返回太大 400 之后，**同一会话每条都会 400，要新开会话** |
+| 「经门户 / 网关上传制品或 Skill 失败，405 或一个拦截页」 | 响应是不是 HTML 拦截页、有没有 NAC 的 `request_id` / `server-timing` | **请求没到平台，被前面的安全设备拦了**（没有 NAC 的响应头 = 不是平台的错）。只有平台前面挂了第三方安全网关（WAF）时才会发生，直接用平台页面上传不受影响。「上传 Skill zip」是**浏览器先解压再逐个文件上传**，每个文件内容照样会被检查。做法：把整个智能体打成 zip 走「上传新版本」（整包压缩，网关看不到文字），或直接在平台页面上传；`node_modules` 别带；根治请网关运维加白名单，并把拦截页原文发给他们 |
+| 「HTML 预览是空白 / 图表出不来」 | 浏览器开发者工具 Network 看外部脚本有没有加载失败 | HTML 预览里的资源是**用户自己的浏览器**去加载的；用户那边访问不了外部 CDN（内网 / 断网）就空白。要离线可用：把库**内联**进 HTML（库由生成脚本写进 HTML，不要让模型自己输出这 1MB），并且别让智能体把生成的大 HTML 再读回上下文（会撑爆，见上一条）。另：智能体用脚本在沙箱里生成的 HTML 不会自动出预览卡，要到沙箱文件里打开，那里默认是安全模式，点「允许脚本」图表才会渲染 |
+| 「修了运行时的问题，但老版本还是老样子」 | `nac versions list --json` 看跑的是哪个版本 | 对**旧版本「重新部署」不会换运行时镜像**（版本创建时就冻结了运行时）。运行时侧的修复**要发一个新版本才生效**：重新 `nac deploy <env>` |
 | 「trace 里是 `🔒 [encrypted]` / 查 trace 报 403」 | 看是哪一种 | `🔒 [encrypted]` = 项目开了隐私域，Playground 输口令解锁（**口令不可找回**）；`403 Langfuse not configured` = 这个项目没配 trace 存储，**不是权限问题**，找管理员开 |
 
 ---
@@ -370,8 +514,7 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
    **它绿了什么都不能证明。** 验证部署可用只有 `nac smoke`。
 2. **界面 / CLI 的「部署成功」不等于生效** —— 部署是异步的，命令返回只代表任务已提交。
    判据永远是 `/runs` 的 `versionId`。
-3. **`nac logs` 的 `--last` / `--level` / `--grep` 三个参数服务端不认，被静默丢弃**
-   （`--help` 里那句 "Filters are combined server-side" 已过时）。
+3. **`nac logs` 的 `--last` / `--level` / `--grep` 在 alpha 平台实测服务端没过滤**（CLI 会把 last/level/grep 都传给服务端，别的平台版本没验证）。
    自证：`nac logs <env> --level error` 与 `nac logs <env>` 输出**逐字相同**。
    替代：`nac logs <env> --json | jq -r '.response.logs' | grep …`，或 `nac api` 加 `?trace_id=` / `?tail=2000`。
 4. **`nexau.json` 的 `setup` 失败不会让部署失败** —— 只写一行 `WARNING: setup command failed:` 就继续。
@@ -395,6 +538,9 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
     **那不代表服务坏了**，先发一次对话把它唤醒再看。
 15. **`POST /agent-api/stop` 返回 `{"status":"noop"}` 不是失败** —— 意思是当前没有正在跑的 run，
     没什么可停，这是成功语义。
+16. **0.4.x 交互模式的 `nac chat`（不带 `-m`）加不加 `--json` 都会 panic**（工具结果按字节截断）：崩的不是你的 agent，是 CLI 自己的输出截断。对话一律 `-m "…" --json`（或 `--stdin --json`）。
+17. **`nac dev` 看似在运行 ≠ 在监听**：0.4.x 里 `--watch` / `--chat` 没有实现（参数被忽略），改了东西不会重新部署，别拿它的「运行中」当「已更新」。
+18. **`nac logs` 过滤参数无效的补充**：想去掉 DEBUG 噪音用 `nac logs <env> --json | jq -r '.response.logs' | grep -v '"DEBUG"'`。
 
 ---
 
@@ -416,7 +562,7 @@ curl -s "$BASE/agent-api/sessions/$SID/runs" -u "$AK:$SK" | jq '.runs[0]'
 | 出网 | 只允许公网单播 IPv4；私网段与 IPv6 不通；有 DNS 重绑定防护 | 连内网服务被拒（**设计如此**）；公网是否放行取决于部署方 |
 | shell 输出 | 合计超约 1 万字符 → 每路各留头 5000 + 尾 5000 | 有明确标记 `... [N characters omitted] ...`，完整输出落在沙箱文件里 |
 | `run_shell_command` | 默认超时 30 分钟（agent 可传更短） | `Timeout: command timed out after 30.0 minutes.` |
-| 单次运行 | 默认最多 100 轮、上下文 128k tokens（**这两个你自己能改**） | 回复末尾追加 `[Note: Maximum iteration limit reached]` |
+| 单次运行 | 默认最多 100 轮、上下文 128k tokens（**这两个你自己能改**） | 回复末尾追加 `[Error: Maximum iteration limit reached.]`（少数收尾路径是 `[Note: Maximum iteration limit reached]`；前面带的是字面 `\n\n` 四个字符，不是换行），run 状态仍是成功 |
 | 会话文件上传 | 单文件 100 MiB | 413 `multipart upload exceeds <N> bytes` |
 | 环境变量 | key 只能字母/数字/下划线且 ≤255；`LANGFUSE_*` 是保留前缀 | 写入被拒并给出明确提示 |
 

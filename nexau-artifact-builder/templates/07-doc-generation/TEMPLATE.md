@@ -155,7 +155,7 @@ Agent 直接 `dotnet build` 会踩 **CS8802**（`templates/` 下多个 `.cs` 都
 
 ## 已知的坑
 
-⚠️ **1. `dotnet restore` 需要沙箱能访问 NuGet**。沙箱镜像预装了 .NET SDK 8.0（就是为了在沙箱里编译运行 C# OpenXML 代码生成红头文件 docx）和 LibreOffice，但 **`DocumentFormat.OpenXml 3.2.0` 没有预置 NuGet 缓存**，首次 `render` 会实时 restore。出网被 NFW 拦或纯离线环境 → 编译失败。修法：放通 NuGet 出网 / 预置离线包 / 或把编译好的 `templates/bin/` 一起打进制品（注意 100 MiB 上限）。
+⚠️ **1. `dotnet restore` 需要沙箱能访问 NuGet**。沙箱镜像预装了 .NET SDK 8.0（就是为了在沙箱里编译运行 C# OpenXML 代码生成红头文件 docx）和 LibreOffice，但 **`DocumentFormat.OpenXml 3.2.0` 没有预置 NuGet 缓存**，首次 `render` 会实时 restore。出网被防火墙拦或纯离线环境 → 编译失败。修法：放通 NuGet 出网 / 预置离线包 / 或把编译好的 `templates/bin/` 一起打进制品（注意 100 MiB 上限）。
 
 ⚠️ **2. `set -euo pipefail` × `find`——本案例第 5 轮才挖到的真根因**。`bin/` 不存在时 `find` 返回 exit 1 → `pipefail` 让整条管道 1 → `set -e` 杀脚本 → 编译逻辑根本没跑到 → Agent 只看到「exit 1 无输出」。**7 处 `find` 全部要 `|| true`**。你新增任何 `find` / `grep` 之类"空结果是合法的"命令时，同样要加。
 
